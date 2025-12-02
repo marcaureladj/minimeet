@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../services/supabaseClient';
+import { Mail, Lock, ArrowRight, Video } from 'lucide-react';
 
 const LoginPage = () => {
   const [email, setEmail] = useState('');
@@ -25,86 +26,134 @@ const LoginPage = () => {
   };
 
   return (
-    <div className="w-screen min-h-screen flex flex-col items-center justify-center bg-minimeet-background p-4 font-sans">
-      <div className="w-full max-w-md bg-minimeet-surface p-8 sm:p-10 rounded-minimeet-xl shadow-minimeet-lg space-y-8">
-        <div className="text-center">
-          <h2 className="mt-6 text-3xl font-semibold tracking-tight text-minimeet-text-primary">
-            Connectez-vous
-          </h2>
+    <div className="min-h-screen flex bg-gradient-to-br from-gray-100 to-gray-200">
+      {/* Left Panel - Branding */}
+      <div className="hidden lg:flex lg:w-1/2 bg-gradient-to-br from-blue-600 to-blue-700 p-12 flex-col justify-between">
+        <div>
+          <div className="flex items-center space-x-3">
+            <div className="bg-white rounded-xl p-2">
+              <img src="/logo-minimeet.png" alt="MiniMeet" className="h-10" />
+            </div>
+           
+          </div>
         </div>
-
-        <form className="mt-8 space-y-6" onSubmit={handleLogin}>
-          <div>
-            <label htmlFor="email-address" className="block text-sm font-medium text-minimeet-text-secondary mb-1.5">
-              Adresse e-mail
-            </label>
-            <input
-              id="email-address"
-              name="email"
-              type="email"
-              autoComplete="email"
-              required
-              className="w-full px-4 py-3 border border-minimeet-border rounded-minimeet-md bg-minimeet-background text-minimeet-text-primary placeholder-minimeet-text-muted focus:ring-2 focus:ring-minimeet-primary focus:border-transparent shadow-minimeet-sm sm:text-sm"
-              placeholder="vous@exemple.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              disabled={loading}
-            />
-          </div>
-          <div>
-            <label htmlFor="password" className="block text-sm font-medium text-minimeet-text-secondary mb-1.5">
-              Mot de passe
-            </label>
-            <input
-              id="password"
-              name="password"
-              type="password"
-              autoComplete="current-password"
-              required
-              className="w-full px-4 py-3 border border-minimeet-border rounded-minimeet-md bg-minimeet-background text-minimeet-text-primary placeholder-minimeet-text-muted focus:ring-2 focus:ring-minimeet-primary focus:border-transparent shadow-minimeet-sm sm:text-sm"
-              placeholder="Votre mot de passe"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              disabled={loading}
-            />
-          </div>
-
-          {error && (
-            <p className="text-sm text-minimeet-error text-center py-2">{error}</p>
-          )}
-
-          <div>
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full flex justify-center py-3.5 px-4 border border-transparent text-sm font-medium rounded-minimeet-md text-white bg-minimeet-primary hover:bg-minimeet-primary-hover focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-minimeet-primary disabled:opacity-70 disabled:cursor-not-allowed transition-all duration-150 shadow-minimeet-md hover:shadow-minimeet-lg"
-            >
-              {loading ? (
-                <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-              ) : null}
-              {loading ? 'Connexion...' : 'Se connecter'}
-            </button>
-          </div>
-        </form>
-
-        <div className="mt-6 text-center">
-          <p className="text-sm text-minimeet-text-secondary">
-            Ou
+        
+        <div className="space-y-6">
+          <h1 className="text-4xl font-bold text-white leading-tight">
+            Connectez-vous avec<br />vos équipes, partout.
+          </h1>
+          <p className="text-blue-100 text-lg max-w-md">
+            Visioconférence simple et efficace. Créez des réunions en un clic et collaborez en temps réel.
           </p>
-          <Link 
-            to="/register" 
-            className="mt-2 inline-block w-full py-3 px-4 border border-minimeet-border text-sm font-medium rounded-minimeet-md text-minimeet-primary bg-minimeet-surface hover:bg-minimeet-background focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-minimeet-primary transition-colors duration-150 shadow-minimeet-sm hover:shadow-minimeet-md"
-          >
-            Créer un nouveau compte
-          </Link>
+          <div className="flex space-x-4">
+            <div className="flex -space-x-3">
+              {['bg-pink-400', 'bg-purple-400', 'bg-cyan-400', 'bg-green-400'].map((color, i) => (
+                <div key={i} className={`w-10 h-10 ${color} rounded-full border-2 border-blue-600 flex items-center justify-center text-white text-sm font-semibold`}>
+                  {String.fromCharCode(65 + i)}
+                </div>
+              ))}
+            </div>
+            <div className="text-blue-100 text-sm">
+              <span className="font-semibold text-white">+1000</span> utilisateurs actifs
+            </div>
+          </div>
         </div>
 
+        <p className="text-blue-200 text-sm">© 2025 MiniMeet. Tous droits réservés.</p>
+      </div>
+
+      {/* Right Panel - Form */}
+      <div className="flex-1 flex items-center justify-center p-8">
+        <div className="w-full max-w-md">
+          {/* Mobile Logo */}
+          <div className="lg:hidden flex items-center justify-center space-x-3 mb-8">
+            <div className="bg-white rounded-xl p-2 shadow-md">
+              <img src="/logo-minimeet.png" alt="MiniMeet" className="h-10" />
+            </div>
+           
+          </div>
+
+          <div className="bg-white rounded-3xl shadow-xl p-8">
+            <div className="text-center mb-8">
+              <h2 className="text-2xl font-bold text-gray-900">Bon retour !</h2>
+              <p className="text-gray-500 mt-2">Connectez-vous à votre compte</p>
+            </div>
+
+            <form onSubmit={handleLogin} className="space-y-5">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Adresse e-mail
+                </label>
+                <div className="relative">
+                  <Mail size={20} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="vous@exemple.com"
+                    required
+                    disabled={loading}
+                    className="w-full pl-12 pr-4 py-3.5 border border-gray-200 rounded-xl bg-gray-50 text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent focus:bg-white transition-all"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Mot de passe
+                </label>
+                <div className="relative">
+                  <Lock size={20} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="••••••••"
+                    required
+                    disabled={loading}
+                    className="w-full pl-12 pr-4 py-3.5 border border-gray-200 rounded-xl bg-gray-50 text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent focus:bg-white transition-all"
+                  />
+                </div>
+              </div>
+
+              {error && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-xl">
+                  <p className="text-sm text-red-600 text-center">{error}</p>
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full py-3.5 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 disabled:opacity-70 disabled:cursor-not-allowed transition-all flex items-center justify-center space-x-2 shadow-lg shadow-blue-600/20"
+              >
+                {loading ? (
+                  <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <>
+                    <span>Se connecter</span>
+                    <ArrowRight size={18} />
+                  </>
+                )}
+              </button>
+            </form>
+
+            <div className="mt-6 space-y-3 text-center">
+              <Link to="/forgot-password" className="block text-sm text-blue-600 font-medium hover:text-blue-700">
+                Mot de passe oublié ?
+              </Link>
+              <p className="text-gray-500">
+                Pas encore de compte ?{' '}
+                <Link to="/register" className="text-blue-600 font-semibold hover:text-blue-700">
+                  Créer un compte
+                </Link>
+              </p>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
 };
 
-export default LoginPage; 
+export default LoginPage;

@@ -10,7 +10,11 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@gsap/react": "^2.1.2",
     "@supabase/supabase-js": "^2.49.4",
+    "framer-motion": "^12.23.25",
+    "gsap": "^3.13.0",
+    "lucide-react": "^0.555.0",
     "peerjs": "^1.5.4",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",

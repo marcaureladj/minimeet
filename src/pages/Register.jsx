@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom'; // Décommenté
-import { supabase } from '../services/supabaseClient'; // Décommenté
+import { Link, useNavigate } from 'react-router-dom';
+import { supabase } from '../services/supabaseClient';
+import { Mail, Lock, User, ArrowRight, Video, CheckCircle } from 'lucide-react';
 
 const RegisterPage = () => {
   const [email, setEmail] = useState('');
@@ -10,7 +11,7 @@ const RegisterPage = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
-  const navigate = useNavigate(); // Décommenté
+  const navigate = useNavigate();
 
   const handleRegister = async (e) => {
     e.preventDefault();
@@ -18,46 +19,33 @@ const RegisterPage = () => {
     setSuccess(null);
 
     if (!fullName.trim()) {
-      setError("Le nom et prénom sont requis.");
+      setError("Le nom est requis.");
       return;
     }
-
     if (password !== confirmPassword) {
       setError("Les mots de passe ne correspondent pas.");
       return;
     }
+    if (password.length < 6) {
+      setError("Le mot de passe doit contenir au moins 6 caractères.");
+      return;
+    }
+
     setLoading(true);
     try {
       const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
         email,
         password,
-        options: {
-          data: {
-            full_name: fullName.trim()
-          }
-        }
+        options: { data: { full_name: fullName.trim() } }
       });
 
       if (signUpError) throw signUpError;
-      if (!signUpData.user) throw new Error("L'utilisateur n'a pas été créé correctement après signUp (pas de user data).");
+      if (!signUpData.user) throw new Error("Erreur lors de la création du compte.");
 
-      console.log(`Inscription auth réussie pour ${signUpData.user.id}. Le profil devrait être créé par le trigger.`);
-
-      const { data: updatedUserData, error: updateUserError } = await supabase.auth.updateUser({
-        data: { full_name: fullName.trim() } 
-      });
-
-      if (updateUserError) {
-        console.warn("Erreur lors de la mise à jour des user_metadata (non bloquant):", updateUserError);
-      } else {
-        console.log("User metadata (via auth.updateUser) mis à jour avec succès:", updatedUserData);
-      }
-
-      setSuccess("Inscription réussie !");
-      // Optionnel: rediriger après un délai si vous le souhaitez, par exemple vers la page de connexion.
-      // setTimeout(() => navigate('/login'), 3000);
+      await supabase.auth.updateUser({ data: { full_name: fullName.trim() } });
+      setSuccess("Compte créé avec succès !");
+      setTimeout(() => navigate('/dashboard'), 1500);
     } catch (error) {
-      console.error("Erreur globale lors de l'inscription:", error);
       setError(error.message);
     } finally {
       setLoading(false);
@@ -65,123 +53,161 @@ const RegisterPage = () => {
   };
 
   return (
-    <div className="w-screen min-h-screen flex flex-col items-center justify-center bg-minimeet-background p-4 font-sans">
-      <div className="w-full max-w-md bg-minimeet-surface p-8 sm:p-10 rounded-minimeet-xl shadow-minimeet-lg space-y-8">
-        <div className="text-center">
-          <h2 className="mt-6 text-3xl font-semibold tracking-tight text-minimeet-text-primary">
-            Créez votre compte
-          </h2>
+    <div className="min-h-screen flex bg-gradient-to-br from-gray-100 to-gray-200">
+      {/* Left Panel - Branding */}
+      <div className="hidden lg:flex lg:w-1/2 bg-gradient-to-br from-blue-600 to-blue-700 p-12 flex-col justify-between">
+        <div>
+          <div className="flex items-center space-x-3">
+            <div className="bg-white rounded-xl p-2">
+              <img src="/logo-minimeet.png" alt="MiniMeet" className="h-10" />
+            </div>
+           
+          </div>
         </div>
-
-        <form className="mt-8 space-y-6" onSubmit={handleRegister}>
-          <div>
-            <label htmlFor="full-name" className="block text-sm font-medium text-minimeet-text-secondary mb-1.5">
-              Nom et Prénom
-            </label>
-            <input
-              id="full-name"
-              name="full-name"
-              type="text"
-              autoComplete="name"
-              required
-              className="w-full px-4 py-3 border border-minimeet-border rounded-minimeet-md bg-minimeet-background text-minimeet-text-primary placeholder-minimeet-text-muted focus:ring-2 focus:ring-minimeet-primary focus:border-transparent shadow-minimeet-sm sm:text-sm"
-              placeholder="Ex: Jean Dupont"
-              value={fullName}
-              onChange={(e) => setFullName(e.target.value)}
-              disabled={loading}
-            />
-          </div>
-          <div>
-            <label htmlFor="email-address" className="block text-sm font-medium text-minimeet-text-secondary mb-1.5">
-              Adresse e-mail
-            </label>
-            <input
-              id="email-address"
-              name="email"
-              type="email"
-              autoComplete="email"
-              required
-              className="w-full px-4 py-3 border border-minimeet-border rounded-minimeet-md bg-minimeet-background text-minimeet-text-primary placeholder-minimeet-text-muted focus:ring-2 focus:ring-minimeet-primary focus:border-transparent shadow-minimeet-sm sm:text-sm"
-              placeholder="vous@exemple.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              disabled={loading}
-            />
-          </div>
-          <div>
-            <label htmlFor="password" className="block text-sm font-medium text-minimeet-text-secondary mb-1.5">
-              Mot de passe
-            </label>
-            <input
-              id="password"
-              name="password"
-              type="password"
-              autoComplete="new-password"
-              required
-              className="w-full px-4 py-3 border border-minimeet-border rounded-minimeet-md bg-minimeet-background text-minimeet-text-primary placeholder-minimeet-text-muted focus:ring-2 focus:ring-minimeet-primary focus:border-transparent shadow-minimeet-sm sm:text-sm"
-              placeholder="Choisissez un mot de passe (min. 6 caractères)"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              disabled={loading}
-            />
-          </div>
-          <div>
-            <label htmlFor="confirm-password" className="block text-sm font-medium text-minimeet-text-secondary mb-1.5">
-              Confirmez le mot de passe
-            </label>
-            <input
-              id="confirm-password"
-              name="confirm-password"
-              type="password"
-              autoComplete="new-password"
-              required
-              className="w-full px-4 py-3 border border-minimeet-border rounded-minimeet-md bg-minimeet-background text-minimeet-text-primary placeholder-minimeet-text-muted focus:ring-2 focus:ring-minimeet-primary focus:border-transparent shadow-minimeet-sm sm:text-sm"
-              placeholder="Retapez votre mot de passe"
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              disabled={loading}
-            />
-          </div>
-
-          {error && (
-            <p className="text-sm text-minimeet-error text-center py-2">{error}</p>
-          )}
-          {success && (
-            <p className="text-sm text-minimeet-success text-center py-2">{success}</p>
-          )}
-
-          <div>
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full flex justify-center py-3.5 px-4 border border-transparent text-sm font-medium rounded-minimeet-md text-white bg-minimeet-primary hover:bg-minimeet-primary-hover focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-minimeet-primary disabled:opacity-70 disabled:cursor-not-allowed transition-all duration-150 shadow-minimeet-md hover:shadow-minimeet-lg"
-            >
-              {loading ? (
-                <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-              ) : null}
-              {loading ? 'Création du compte...' : 'Créer un compte'}
-            </button>
-          </div>
-        </form>
-
-        <div className="mt-6 text-center">
-          <p className="text-sm text-minimeet-text-secondary">
-            Ou
+        
+        <div className="space-y-6">
+          <h1 className="text-4xl font-bold text-white leading-tight">
+            Rejoignez la<br />communauté MiniMeet
+          </h1>
+          <p className="text-blue-100 text-lg max-w-md">
+            Créez votre compte gratuitement et commencez à organiser vos réunions en quelques secondes.
           </p>
-          <Link 
-            to="/login" 
-            className="mt-2 inline-block w-full py-3 px-4 border border-minimeet-border text-sm font-medium rounded-minimeet-md text-minimeet-primary bg-minimeet-surface hover:bg-minimeet-background focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-minimeet-primary transition-colors duration-150 shadow-minimeet-sm hover:shadow-minimeet-md"
-          >
-            Se connecter avec un compte existant
-          </Link>
+          <div className="space-y-3">
+            {['Réunions illimitées', 'Chat en temps réel', 'Partage d\'écran', 'Enregistrement'].map((feature, i) => (
+              <div key={i} className="flex items-center space-x-3 text-white">
+                <CheckCircle size={20} className="text-green-300" />
+                <span>{feature}</span>
+              </div>
+            ))}
+          </div>
         </div>
 
+        <p className="text-blue-200 text-sm">© 2025 MiniMeet. Tous droits réservés.</p>
+      </div>
+
+      {/* Right Panel - Form */}
+      <div className="flex-1 flex items-center justify-center p-8">
+        <div className="w-full max-w-md">
+          {/* Mobile Logo */}
+          <div className="lg:hidden flex items-center justify-center space-x-3 mb-8">
+            <div className="bg-white rounded-xl p-2 shadow-md">
+              <img src="/logo-minimeet.png" alt="MiniMeet" className="h-10" />
+            </div>
+            
+          </div>
+
+          <div className="bg-white rounded-3xl shadow-xl p-8">
+            <div className="text-center mb-8">
+              <h2 className="text-2xl font-bold text-gray-900">Créer un compte</h2>
+              <p className="text-gray-500 mt-2">Commencez gratuitement</p>
+            </div>
+
+            <form onSubmit={handleRegister} className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Nom complet</label>
+                <div className="relative">
+                  <User size={20} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
+                  <input
+                    type="text"
+                    value={fullName}
+                    onChange={(e) => setFullName(e.target.value)}
+                    placeholder="Jean Dupont"
+                    required
+                    disabled={loading}
+                    className="w-full pl-12 pr-4 py-3.5 border border-gray-200 rounded-xl bg-gray-50 text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent focus:bg-white transition-all"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Adresse e-mail</label>
+                <div className="relative">
+                  <Mail size={20} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="vous@exemple.com"
+                    required
+                    disabled={loading}
+                    className="w-full pl-12 pr-4 py-3.5 border border-gray-200 rounded-xl bg-gray-50 text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent focus:bg-white transition-all"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Mot de passe</label>
+                <div className="relative">
+                  <Lock size={20} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="Min. 6 caractères"
+                    required
+                    disabled={loading}
+                    className="w-full pl-12 pr-4 py-3.5 border border-gray-200 rounded-xl bg-gray-50 text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent focus:bg-white transition-all"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Confirmer le mot de passe</label>
+                <div className="relative">
+                  <Lock size={20} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
+                  <input
+                    type="password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="••••••••"
+                    required
+                    disabled={loading}
+                    className="w-full pl-12 pr-4 py-3.5 border border-gray-200 rounded-xl bg-gray-50 text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent focus:bg-white transition-all"
+                  />
+                </div>
+              </div>
+
+              {error && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-xl">
+                  <p className="text-sm text-red-600 text-center">{error}</p>
+                </div>
+              )}
+
+              {success && (
+                <div className="p-3 bg-green-50 border border-green-200 rounded-xl">
+                  <p className="text-sm text-green-600 text-center">{success}</p>
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full py-3.5 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 disabled:opacity-70 disabled:cursor-not-allowed transition-all flex items-center justify-center space-x-2 shadow-lg shadow-blue-600/20"
+              >
+                {loading ? (
+                  <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <>
+                    <span>Créer mon compte</span>
+                    <ArrowRight size={18} />
+                  </>
+                )}
+              </button>
+            </form>
+
+            <div className="mt-6 text-center">
+              <p className="text-gray-500">
+                Déjà un compte ?{' '}
+                <Link to="/login" className="text-blue-600 font-semibold hover:text-blue-700">
+                  Se connecter
+                </Link>
+              </p>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );
 };
 
-export default RegisterPage; 
+export default RegisterPage;

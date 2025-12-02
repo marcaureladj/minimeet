@@ -1,169 +1,234 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-// Removed: import { supabase } from '../services/supabaseClient'; as it's not used in this component based on the provided snippet.
-// If it was intended for future use, it can be re-added.
-
-// Icônes simples pour la démo (à remplacer par de vraies icônes SVG si disponibles ou nécessaires)
-const IconBrand = ({ className = "w-8 h-8" }) => (
-  <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M12 2L2 7l10 5 10-5-10-5z"></path>
-    <path d="M2 17l10 5 10-5"></path>
-    <path d="M2 12l10 5 10-5"></path>
-  </svg>
-);
-
-const IconChat = ({ className = "w-6 h-6" }) => (
-  <svg className={className} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-    <path strokeLinecap="round" strokeLinejoin="round" d="M20.25 8.511c.884.284 1.5 1.128 1.5 2.097v4.286c0 1.136-.847 2.1-1.98 2.193-.34.027-.68.052-1.02.072v3.091l-3.68-3.091a4.501 4.501 0 00-1.007.072H7.5a2.25 2.25 0 01-2.25-2.25V10.5c0-.97.616-1.813 1.5-2.097m6.025 0a4.5 4.5 0 01-8.568 0M12 6.75c.517 0 1.008.064 1.482.181M12 6.75a4.5 4.5 0 00-8.568 0m8.568 0L12 6.75m0 0L12 4.5m0 2.25L15.083 9M12 6.75L8.917 9" />
-  </svg>
-);
-
-const IconShare = ({ className = "w-6 h-6" }) => (
-  <svg className={className} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-    <path strokeLinecap="round" strokeLinejoin="round" d="M7.217 10.907a2.25 2.25 0 100 2.186m0-2.186c.18.324.283.696.283 1.093s-.103.77-.283 1.093m0-2.186l9.566-5.314m-9.566 7.5l9.566 5.314m0 0a2.25 2.25 0 103.935 2.186 2.25 2.25 0 00-3.935-2.186zm0-12.814a2.25 2.25 0 103.933-2.185 2.25 2.25 0 00-3.933 2.185z" />
-  </svg>
-);
-
-const IconCheckCircle = ({ className = "w-6 h-6" }) => (
-  <svg className={className} fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
-    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-  </svg>
-);
+import { Video, MessageCircle, Monitor, Shield, Users, Zap, ArrowRight, CheckCircle } from 'lucide-react';
 
 const NewLandingPage = () => {
-  const gradientBackground = 'bg-gradient-to-br from-minimeet-background via-pink-200 to-orange-200';
+  const features = [
+    { icon: Video, title: 'Appels HD', description: 'Vidéo et audio de haute qualité pour des réunions fluides' },
+    { icon: MessageCircle, title: 'Chat intégré', description: 'Communiquez par messages pendant vos appels' },
+    { icon: Monitor, title: 'Partage d\'écran', description: 'Partagez votre écran en un clic' },
+    { icon: Shield, title: 'Sécurisé', description: 'Connexions chiffrées de bout en bout' },
+    { icon: Users, title: 'Collaboratif', description: 'Liste de tâches partagée en temps réel' },
+    { icon: Zap, title: 'Rapide', description: 'Créez une réunion en quelques secondes' },
+  ];
 
   return (
-    <div className={`min-h-screen flex flex-col font-sans ${gradientBackground} text-minimeet-text-primary`}>
-      {/* Barre de navigation */}
-      <nav className="py-4 sm:py-6 px-4 sm:px-8 md:px-16 sticky top-0 z-50 bg-white/80 backdrop-blur-md shadow-sm">
-        <div className="container mx-auto flex justify-between items-center">
-          <Link to="/" className="flex items-center space-x-2">
-            <IconBrand className="w-7 h-7 sm:w-8 sm:h-8 text-minimeet-primary" />
-            <span className="text-xl sm:text-2xl font-semibold text-minimeet-primary">MiniMeet</span>
-          </Link>
-          <div className="hidden md:flex items-center space-x-6 sm:space-x-8 text-sm sm:text-base">
-            <a href="#features" className="hover:text-minimeet-primary transition-colors">Fonctionnalités</a>
-            <a href="#about" className="hover:text-minimeet-primary transition-colors">À Propos</a>
-            <a href="#contact" className="hover:text-minimeet-primary transition-colors">Contact</a>
-          </div>
-          <div className="md:hidden">
-             <button className="text-minimeet-text-primary focus:outline-none">
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16m-7 6h7"></path></svg>
-             </button>
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100">
+      {/* Navigation */}
+      <nav className="fixed top-0 left-0 right-0 z-50 bg-white/80 backdrop-blur-md border-b border-gray-100">
+        <div className="max-w-7xl mx-auto px-6 py-4">
+          <div className="flex items-center justify-between">
+            <Link to="/" className="flex items-center space-x-3">
+              <div className="w-10 h-10 bg-blue-600 rounded-xl flex items-center justify-center">
+                <Video size={20} className="text-white" />
+              </div>
+              <span className="text-xl font-bold text-gray-900">MiniMeet</span>
+            </Link>
+            <div className="hidden md:flex items-center space-x-8">
+              <a href="#features" className="text-gray-600 hover:text-gray-900 transition-colors">Fonctionnalités</a>
+              <a href="#about" className="text-gray-600 hover:text-gray-900 transition-colors">À propos</a>
+              <a href="#contact" className="text-gray-600 hover:text-gray-900 transition-colors">Contact</a>
+            </div>
+            <div className="flex items-center space-x-3">
+              <Link to="/login" className="px-4 py-2 text-gray-700 hover:text-gray-900 font-medium transition-colors">
+                Connexion
+              </Link>
+              <Link to="/register" className="px-5 py-2.5 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 transition-all shadow-lg shadow-blue-600/20">
+                Commencer
+              </Link>
+            </div>
           </div>
         </div>
       </nav>
 
-      {/* Section Héros */}
-      <main className="flex-grow flex items-center">
-        <div className="container mx-auto px-4 sm:px-8 md:px-16 py-12 sm:py-16 md:py-24 text-center md:text-left">
-          <div className="grid md:grid-cols-2 gap-8 sm:gap-12 items-center">
-            <div className="space-y-6 sm:space-y-8">
-              <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight">
-                MiniMeet: Vos réunions en ligne, <span className="text-minimeet-primary">simplifiées</span>.
+      {/* Hero Section */}
+      <section className="pt-32 pb-20 px-6">
+        <div className="max-w-7xl mx-auto">
+          <div className="grid lg:grid-cols-2 gap-12 items-center">
+            <div className="space-y-8">
+              <div className="inline-flex items-center space-x-2 bg-blue-50 text-blue-600 px-4 py-2 rounded-full text-sm font-medium">
+                <Zap size={16} />
+                <span>Simple, rapide, efficace</span>
+              </div>
+              <h1 className="text-5xl lg:text-6xl font-bold text-gray-900 leading-tight">
+                Vos réunions en ligne,{' '}
+                <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-purple-600">
+                  simplifiées
+                </span>
               </h1>
-              <p className="text-base sm:text-lg md:text-xl text-minimeet-text-secondary max-w-xl mx-auto md:mx-0">
-                Connectez-vous, partagez et collaborez en temps réel avec une solution de visioconférence intuitive et performante. Idéal pour les équipes, les amis et la famille.
+              <p className="text-xl text-gray-600 max-w-lg">
+                Connectez-vous, partagez et collaborez en temps réel. La visioconférence n'a jamais été aussi simple.
               </p>
-              <div className="flex flex-col sm:flex-row justify-center md:justify-start space-y-4 sm:space-y-0 sm:space-x-4 pt-4">
+              <div className="flex flex-col sm:flex-row gap-4">
                 <Link
                   to="/register"
-                  className="px-6 sm:px-8 py-3 sm:py-3.5 text-base sm:text-lg font-medium text-white bg-minimeet-primary hover:bg-minimeet-primary-hover rounded-minimeet-md shadow-minimeet-lg hover:shadow-minimeet-xl transition-all duration-150 transform hover:scale-105"
+                  className="px-8 py-4 bg-blue-600 text-white rounded-2xl font-semibold hover:bg-blue-700 transition-all shadow-xl shadow-blue-600/30 flex items-center justify-center space-x-2 group"
                 >
-                  Créer un compte
+                  <span>Créer un compte gratuit</span>
+                  <ArrowRight size={20} className="group-hover:translate-x-1 transition-transform" />
                 </Link>
                 <Link
                   to="/login"
-                  className="px-6 sm:px-8 py-3 sm:py-3.5 text-base sm:text-lg font-medium text-minimeet-primary border-2 border-minimeet-primary hover:bg-minimeet-primary hover:text-white rounded-minimeet-md shadow-minimeet-sm hover:shadow-minimeet-md transition-all duration-150"
+                  className="px-8 py-4 bg-white text-gray-900 rounded-2xl font-semibold hover:bg-gray-50 transition-all border border-gray-200 flex items-center justify-center"
                 >
                   Se connecter
                 </Link>
               </div>
             </div>
-            <div className="hidden md:flex justify-center items-center">
-              <div className="w-full max-w-md aspect-square bg-gradient-to-tr from-minimeet-primary via-red-300 to-orange-300 rounded-minimeet-xl shadow-minimeet-xl flex items-center justify-center p-8">
-                 <IconBrand className="w-32 h-32 text-white opacity-75" />
+
+            {/* Hero Visual */}
+            <div className="relative">
+              <div className="bg-gradient-to-br from-blue-600 to-purple-600 rounded-3xl p-8 shadow-2xl">
+                <div className="bg-gray-900 rounded-2xl p-4 space-y-4">
+                  {/* Mock Video Grid */}
+                  <div className="grid grid-cols-2 gap-3">
+                    {['bg-gradient-to-br from-pink-400 to-rose-500', 'bg-gradient-to-br from-cyan-400 to-blue-500', 'bg-gradient-to-br from-green-400 to-emerald-500', 'bg-gradient-to-br from-purple-400 to-indigo-500'].map((gradient, i) => (
+                      <div key={i} className={`${gradient} rounded-xl aspect-video flex items-center justify-center`}>
+                        <div className="w-12 h-12 bg-white/20 rounded-full flex items-center justify-center text-white text-xl font-bold">
+                          {String.fromCharCode(65 + i)}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  {/* Mock Controls */}
+                  <div className="flex justify-center space-x-3 pt-2">
+                    <div className="w-10 h-10 bg-gray-700 rounded-full"></div>
+                    <div className="w-10 h-10 bg-blue-600 rounded-full"></div>
+                    <div className="w-10 h-10 bg-gray-700 rounded-full"></div>
+                    <div className="w-10 h-10 bg-red-500 rounded-full"></div>
+                  </div>
+                </div>
+              </div>
+              {/* Floating Elements */}
+              <div className="absolute -top-4 -right-4 bg-white rounded-2xl shadow-xl p-4 flex items-center space-x-3">
+                <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
+                  <CheckCircle size={20} className="text-green-600" />
+                </div>
+                <div>
+                  <p className="font-semibold text-gray-900">HD Quality</p>
+                  <p className="text-sm text-gray-500">1080p Video</p>
+                </div>
+              </div>
+              <div className="absolute -bottom-4 -left-4 bg-white rounded-2xl shadow-xl p-4">
+                <div className="flex -space-x-2">
+                  {['bg-blue-400', 'bg-pink-400', 'bg-purple-400'].map((color, i) => (
+                    <div key={i} className={`w-8 h-8 ${color} rounded-full border-2 border-white`}></div>
+                  ))}
+                </div>
+                <p className="text-sm text-gray-600 mt-2">+1000 utilisateurs</p>
               </div>
             </div>
           </div>
         </div>
-      </main>
+      </section>
 
-      {/* Section Fonctionnalités (id="features") - AMÉLIORÉE */}
-      <section id="features" className="py-12 sm:py-16 md:py-20">
-        <div className="container mx-auto px-4 sm:px-8 md:px-16">
-          <div className="text-center mb-12 sm:mb-14 md:mb-20">
-            <h2 className="text-3xl sm:text-4xl font-semibold text-minimeet-text-primary mb-4">Pourquoi choisir MiniMeet ?</h2>
-            <p className="mt-3 sm:mt-4 text-lg sm:text-xl text-minimeet-text-secondary max-w-3xl mx-auto">
-              Une plateforme conçue pour la simplicité et l'efficacité de vos communications. Découvrez nos atouts.
+      {/* Features Section */}
+      <section id="features" className="py-20 px-6 bg-white">
+        <div className="max-w-7xl mx-auto">
+          <div className="text-center mb-16">
+            <h2 className="text-4xl font-bold text-gray-900 mb-4">Tout ce dont vous avez besoin</h2>
+            <p className="text-xl text-gray-600 max-w-2xl mx-auto">
+              Des fonctionnalités puissantes pour des réunions productives
             </p>
           </div>
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8 sm:gap-10">
-            {[
-              { title: "Chat Intégré Facile", description: "Communiquez par messages textes pendant vos appels sans interrompre le flux de la conversation.", icon: <IconChat className="w-7 h-7" /> },
-              { title: "Partage d'Écran Fluide", description: "Partagez votre écran ou des documents en toute simplicité pour des présentations claires et efficaces.", icon: <IconShare className="w-7 h-7" /> },
-              { title: "Haute Qualité & Fiabilité", description: "Profitez d'une connexion stable et d'une qualité audio/vidéo optimale pour toutes vos réunions.", icon: <IconCheckCircle className="w-7 h-7" /> }
-            ].map((feature, index) => (
-              <div key={index} className="bg-white/80 backdrop-blur-sm p-6 sm:p-8 rounded-minimeet-xl shadow-minimeet-lg hover:shadow-minimeet-xl transition-shadow transform hover:-translate-y-1 duration-150">
-                <div className="flex items-center justify-center w-14 h-14 bg-minimeet-primary text-white rounded-minimeet-full mb-5 sm:mb-6">
-                  {feature.icon}
-              </div>
-                <h3 className="text-xl sm:text-2xl font-semibold mb-3 text-minimeet-text-primary">{feature.title}</h3>
-                <p className="text-base text-minimeet-text-secondary">
-                  {feature.description}
-                </p>
-              </div>
-            ))}
+          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
+            {features.map((feature, index) => {
+              const Icon = feature.icon;
+              return (
+                <div key={index} className="group bg-gray-50 hover:bg-white rounded-3xl p-8 transition-all duration-300 hover:shadow-xl border border-transparent hover:border-gray-100">
+                  <div className="w-14 h-14 bg-blue-100 group-hover:bg-blue-600 rounded-2xl flex items-center justify-center mb-6 transition-colors">
+                    <Icon size={24} className="text-blue-600 group-hover:text-white transition-colors" />
+                  </div>
+                  <h3 className="text-xl font-bold text-gray-900 mb-3">{feature.title}</h3>
+                  <p className="text-gray-600">{feature.description}</p>
+                </div>
+              );
+            })}
           </div>
         </div>
       </section>
-      
-      {/* Section "À Propos" (id="about") - AMÉLIORÉE */}
-      <section id="about" className="py-12 sm:py-16 md:py-20">
-          <div className="container mx-auto px-4 sm:px-8 md:px-16">
-            <div className="bg-white/80 backdrop-blur-sm p-8 sm:p-10 md:p-12 rounded-minimeet-xl shadow-minimeet-lg max-w-4xl mx-auto">
-              <h2 className="text-3xl sm:text-4xl font-semibold mb-6 text-center text-minimeet-text-primary">À propos de MiniMeet</h2>
-              <p className="text-lg text-minimeet-text-secondary leading-relaxed mb-4">
-                MiniMeet est un projet passionné visant à fournir une solution de visioconférence simple, open-source et respectueuse de la vie privée. 
-                Nous croyons en la puissance de la connexion humaine et nous nous efforçons de rendre cela accessible à tous.
-              </p>
-              <p className="text-lg text-minimeet-text-secondary leading-relaxed">
-                  Ce projet est en cours de développement. N'hésitez pas à suivre son évolution et à contribuer si le cœur vous en dit !
-            </p>
-            </div>
-          </div>
-      </section>
 
-      {/* Section "Contactez-nous" (id="contact") - AMÉLIORÉE */}
-      <section id="contact" className="py-12 sm:py-16 md:py-20">
-        <div className="container mx-auto px-4 sm:px-8 md:px-16">
-          <div className="bg-white/80 backdrop-blur-sm p-8 sm:p-10 md:p-12 rounded-minimeet-xl shadow-minimeet-lg max-w-3xl mx-auto">
-            <h2 className="text-3xl sm:text-4xl font-semibold mb-8 text-center text-minimeet-text-primary">Contactez-nous</h2>
-            <div className="max-w-xl mx-auto text-center">
-              <p className="text-lg text-minimeet-text-secondary mb-8">
-                Pour toute question, suggestion ou demande d'information, n'hésitez pas à nous joindre.
-              </p>
-              <div className="space-y-6">
-                <div>
-                  <h4 className="text-xl font-medium text-minimeet-primary mb-1">Par Email</h4>
-                  <a href="mailto:marcaureladj@gmail.com" className="text-lg text-minimeet-text-secondary hover:text-minimeet-primary-hover hover:underline">marcaureladj@gmail.com</a>
-                </div>
-                <div>
-                  <h4 className="text-xl font-medium text-minimeet-primary mb-1">Par Téléphone</h4>
-                  <a href="tel:+2290195413447" className="text-lg text-minimeet-text-secondary hover:text-minimeet-primary-hover hover:underline">+229 01 95 41 34</a>
-                </div>
+      {/* About Section */}
+      <section id="about" className="py-20 px-6">
+        <div className="max-w-4xl mx-auto">
+          <div className="bg-gradient-to-br from-blue-600 to-purple-600 rounded-3xl p-12 text-center text-white">
+            <h2 className="text-4xl font-bold mb-6">À propos de MiniMeet</h2>
+            <p className="text-xl text-blue-100 mb-8 max-w-2xl mx-auto">
+              MiniMeet est une solution de visioconférence open-source, simple et respectueuse de votre vie privée. 
+              Nous croyons que la communication devrait être accessible à tous.
+            </p>
+            <div className="flex flex-wrap justify-center gap-8">
+              <div className="text-center">
+                <p className="text-4xl font-bold">100%</p>
+                <p className="text-blue-200">Gratuit</p>
+              </div>
+              <div className="text-center">
+                <p className="text-4xl font-bold">P2P</p>
+                <p className="text-blue-200">Connexion directe</p>
+              </div>
+              <div className="text-center">
+                <p className="text-4xl font-bold">∞</p>
+                <p className="text-blue-200">Réunions illimitées</p>
               </div>
             </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Contact Section */}
+      <section id="contact" className="py-20 px-6 bg-white">
+        <div className="max-w-4xl mx-auto text-center">
+          <h2 className="text-4xl font-bold text-gray-900 mb-6">Contactez-nous</h2>
+          <p className="text-xl text-gray-600 mb-8">
+            Une question ? N'hésitez pas à nous contacter.
+          </p>
+          <div className="flex flex-col sm:flex-row justify-center gap-6">
+            <a
+              href="mailto:marcaureladj@gmail.com"
+              className="px-8 py-4 bg-gray-900 text-white rounded-2xl font-semibold hover:bg-gray-800 transition-all flex items-center justify-center space-x-2"
+            >
+              <span>marcaureladj@gmail.com</span>
+            </a>
+            <a
+              href="tel:+2290195413447"
+              className="px-8 py-4 bg-gray-100 text-gray-900 rounded-2xl font-semibold hover:bg-gray-200 transition-all"
+            >
+              +229 01 95 41 34
+            </a>
+          </div>
+        </div>
+      </section>
+
+      {/* CTA Section */}
+      <section className="py-20 px-6">
+        <div className="max-w-4xl mx-auto">
+          <div className="bg-gray-900 rounded-3xl p-12 text-center">
+            <h2 className="text-4xl font-bold text-white mb-4">Prêt à commencer ?</h2>
+            <p className="text-xl text-gray-400 mb-8">
+              Créez votre première réunion en quelques secondes
+            </p>
+            <Link
+              to="/register"
+              className="inline-flex items-center space-x-2 px-8 py-4 bg-blue-600 text-white rounded-2xl font-semibold hover:bg-blue-700 transition-all shadow-xl shadow-blue-600/30 group"
+            >
+              <span>Commencer gratuitement</span>
+              <ArrowRight size={20} className="group-hover:translate-x-1 transition-transform" />
+            </Link>
           </div>
         </div>
       </section>
 
       {/* Footer */}
-      <footer className="py-6 sm:py-8 border-t border-minimeet-border/30">
-        <div className="container mx-auto px-4 sm:px-8 md:px-16 text-center">
-          <p className="text-sm text-minimeet-text-secondary opacity-90">
-            &copy; {new Date().getFullYear()} MiniMeet. Tous droits réservés.
+      <footer className="py-8 px-6 border-t border-gray-200">
+        <div className="max-w-7xl mx-auto flex flex-col md:flex-row justify-between items-center">
+          <div className="flex items-center space-x-3 mb-4 md:mb-0">
+            <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
+              <Video size={16} className="text-white" />
+            </div>
+            <span className="font-bold text-gray-900">MiniMeet</span>
+          </div>
+          <p className="text-gray-500 text-sm">
+            © {new Date().getFullYear()} MiniMeet. Tous droits réservés.
           </p>
         </div>
       </footer>
@@ -171,4 +236,4 @@ const NewLandingPage = () => {
   );
 };
 
-export default NewLandingPage; 
+export default NewLandingPage;
