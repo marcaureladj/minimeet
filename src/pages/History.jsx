@@ -89,16 +89,21 @@ const HistoryPage = () => {
       const fullTranscript = meeting.transcripts.map(t => t.transcript).join('\n\n');
       const totalDuration = meeting.transcripts.reduce((acc, t) => acc + (t.duration_seconds || 0), 0);
 
-      const summaryText = await generateMeetingSummary(fullTranscript, {
+      // generateMeetingSummary retourne maintenant un objet structuré
+      const summaryData = await generateMeetingSummary(fullTranscript, {
         title: meeting.name || `Réunion ${meeting.room_id}`,
         duration: formatDuration(totalDuration)
       });
 
-      // Save summary to database
+      // Save structured summary to database
       await supabase.from('meeting_summaries').upsert({
         room_id: meeting.room_id,
         user_id: currentUser.id,
-        summary: summaryText,
+        summary: summaryData.summary,
+        key_points: summaryData.key_points,
+        decisions: summaryData.decisions,
+        action_items: summaryData.action_items,
+        next_steps: summaryData.next_steps,
         transcript: fullTranscript,
         duration_seconds: totalDuration,
         created_at: new Date().toISOString()
@@ -291,10 +296,107 @@ const HistoryPage = () => {
                             </div>
 
                             {meeting.summary ? (
-                              <div className="bg-gradient-to-br from-purple-50 to-blue-50 rounded-xl p-4 max-h-64 overflow-y-auto">
-                                <div className="prose prose-sm text-gray-700 whitespace-pre-wrap">
-                                  {meeting.summary.summary}
+                              <div className="space-y-4">
+                                {/* Résumé général */}
+                                <div className="bg-gradient-to-br from-purple-50 to-blue-50 rounded-xl p-4">
+                                  <h5 className="font-semibold text-gray-900 mb-2 text-sm">📝 Résumé</h5>
+                                  <p className="text-gray-700 text-sm leading-relaxed">{meeting.summary.summary}</p>
                                 </div>
+
+                                {/* Points clés */}
+                                {meeting.summary.key_points && meeting.summary.key_points.length > 0 && (
+                                  <div className="bg-blue-50 rounded-xl p-4">
+                                    <h5 className="font-semibold text-gray-900 mb-2 text-sm flex items-center space-x-1">
+                                      <span>🎯</span>
+                                      <span>Points Clés</span>
+                                    </h5>
+                                    <ul className="space-y-1.5">
+                                      {meeting.summary.key_points.map((point, idx) => (
+                                        <li key={idx} className="text-sm text-gray-700 flex items-start space-x-2">
+                                          <span className="text-blue-500 mt-0.5">•</span>
+                                          <span>{point}</span>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
+
+                                {/* Décisions */}
+                                {meeting.summary.decisions && meeting.summary.decisions.length > 0 && (
+                                  <div className="bg-green-50 rounded-xl p-4">
+                                    <h5 className="font-semibold text-gray-900 mb-2 text-sm flex items-center space-x-1">
+                                      <span>✅</span>
+                                      <span>Décisions Prises</span>
+                                    </h5>
+                                    <ul className="space-y-1.5">
+                                      {meeting.summary.decisions.map((decision, idx) => (
+                                        <li key={idx} className="text-sm text-gray-700 flex items-start space-x-2">
+                                          <span className="text-green-500 mt-0.5">•</span>
+                                          <span>{decision}</span>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
+
+                                {/* Actions à faire */}
+                                {meeting.summary.action_items && meeting.summary.action_items.length > 0 && (
+                                  <div className="bg-orange-50 rounded-xl p-4">
+                                    <h5 className="font-semibold text-gray-900 mb-3 text-sm flex items-center space-x-1">
+                                      <span>📋</span>
+                                      <span>Actions à Entreprendre</span>
+                                    </h5>
+                                    <div className="space-y-2">
+                                      {meeting.summary.action_items.map((item, idx) => (
+                                        <div key={idx} className="bg-white rounded-lg p-3 border border-orange-200">
+                                          <div className="flex items-start justify-between">
+                                            <p className="text-sm text-gray-900 font-medium flex-1">{item.task}</p>
+                                            {item.priority && (
+                                              <span className={`ml-2 px-2 py-0.5 rounded text-xs font-medium ${item.priority === 'high' ? 'bg-red-100 text-red-700' :
+                                                  item.priority === 'medium' ? 'bg-yellow-100 text-yellow-700' :
+                                                    'bg-gray-100 text-gray-700'
+                                                }`}>
+                                                {item.priority === 'high' ? 'Haute' : item.priority === 'medium' ? 'Moyenne' : 'Basse'}
+                                              </span>
+                                            )}
+                                          </div>
+                                          <div className="mt-2 flex items-center space-x-4 text-xs text-gray-500">
+                                            {item.assignee && (
+                                              <span className="flex items-center space-x-1">
+                                                <Users size={12} />
+                                                <span>{item.assignee}</span>
+                                              </span>
+                                            )}
+                                            {item.deadline && (
+                                              <span className="flex items-center space-x-1">
+                                                <Calendar size={12} />
+                                                <span>{item.deadline}</span>
+                                              </span>
+                                            )}
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* Prochaines étapes */}
+                                {meeting.summary.next_steps && meeting.summary.next_steps.length > 0 && (
+                                  <div className="bg-indigo-50 rounded-xl p-4">
+                                    <h5 className="font-semibold text-gray-900 mb-2 text-sm flex items-center space-x-1">
+                                      <span>➡️</span>
+                                      <span>Prochaines Étapes</span>
+                                    </h5>
+                                    <ul className="space-y-1.5">
+                                      {meeting.summary.next_steps.map((step, idx) => (
+                                        <li key={idx} className="text-sm text-gray-700 flex items-start space-x-2">
+                                          <span className="text-indigo-500 mt-0.5">•</span>
+                                          <span>{step}</span>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
                               </div>
                             ) : (
                               <div className="text-center py-8">
