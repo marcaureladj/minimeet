@@ -179,15 +179,33 @@ const LiveRoomPage = () => {
   };
 
   // Initialize PeerJS for host
+  // PeerJS pour hôte ET invités
   useEffect(() => {
     if ((isHost || isGuest) && currentUser && localStream) {
       const peer = initializePeer(currentUser.id);
       setPeerInstance(peer);
 
+      peer.on('open', () => {
+        console.log(`${isHost ? 'Hôte' : 'Invité'} peer ouvert:`, currentUser.id);
+      });
+
       peer.on('call', (call) => {
-        // L'hôte répond avec son stream local
+        // Répondre aux spectateurs ET aux autres participants
+        console.log(`${isHost ? 'Hôte' : 'Invité'} répond à l'appel de:`, call.peer);
         call.answer(localStream);
-        console.log(`${isHost ? 'Hôte' : 'Invité'} répond à l'appel d'un spectateur`);
+
+        // Écouter le stream de l'appelant si c'est un invité
+        if (!isHost) {
+          call.on('stream', (remoteStream) => {
+            console.log('Invité reçoit stream de:', call.peer);
+            setRemoteStreams(prev => {
+              if (!prev.find(s => s.id === call.peer)) {
+                return [...prev, { stream: remoteStream, id: call.peer }];
+              }
+              return prev;
+            });
+          });
+        }
       });
 
       peer.on('error', (err) => {
@@ -201,35 +219,66 @@ const LiveRoomPage = () => {
     }
   }, [isHost, isGuest, currentUser, localStream]);
 
-  // For viewers: call the host to receive stream
-  useEffect(() => {
-    if (!isHost && !isGuest && peerInstance && live?.host_id) {
-      console.log(`Spectateur appelle l'hôte ${live.host_id}`);
-      const call = peerInstance.call(live.host_id, null); // Spectateur n'envoie pas de stream
-
-      call.on('stream', (remoteStream) => {
-        console.log('Spectateur reçoit le stream de l\'hôte');
-        // Afficher le stream de l'hôte
-        if (videoRef.current) {
-          videoRef.current.srcObject = remoteStream;
-          videoRef.current.play().catch(e => console.error('Erreur lecture vidéo:', e));
-        }
-        setRemoteStreams([remoteStream]);
-      });
-
-      call.on('error', (err) => {
-        console.error('Erreur lors de l\'appel:', err);
-      });
-
-      setActiveCalls([call]);
-    }
-  }, [isHost, peerInstance, live, isGuest]);
-
-  // Initialize PeerJS for viewers
+  // PeerJS pour spectateurs
   useEffect(() => {
     if (!isHost && !isGuest && currentUser && !peerInstance) {
       const peer = initializePeer(currentUser.id);
       setPeerInstance(peer);
+
+      peer.on('open', async () => {
+        console.log('Spectateur peer ouvert:', currentUser.id);
+
+        // Appeler l'hôte
+        if (live?.host_id) {
+          console.log(`Spectateur appelle l'hôte: ${live.host_id}`);
+          const hostCall = peer.call(live.host_id, null);
+
+          if (hostCall) {
+            hostCall.on('stream', (remoteStream) => {
+              console.log('Spectateur reçoit stream hôte');
+              if (videoRef.current) {
+                videoRef.current.srcObject = remoteStream;
+                videoRef.current.play().catch(e => console.error('Erreur lecture:', e));
+              }
+              setRemoteStreams(prev => [{ stream: remoteStream, id: live.host_id, type: 'host' }]);
+            });
+
+            hostCall.on('error', (err) => {
+              console.error('Erreur appel hôte:', err);
+            });
+
+            setActiveCalls(prev => [...prev, hostCall]);
+          }
+        }
+
+        // Appeler tous les invités
+        if (guests && guests.length > 0) {
+          guests.forEach(guest => {
+            if (guest.status === 'accepted') {
+              console.log(`Spectateur appelle l'invité: ${guest.user_id}`);
+              const guestCall = peer.call(guest.user_id, null);
+
+              if (guestCall) {
+                guestCall.on('stream', (remoteStream) => {
+                  console.log('Spectateur reçoit stream invité:', guest.user_id);
+                  setRemoteStreams(prev => {
+                    if (!prev.find(s => s.id === guest.user_id)) {
+                      return [...prev, { stream: remoteStream, id: guest.user_id, type: 'guest' }];
+                    }
+                    return prev;
+                  });
+                });
+
+                guestCall.on('error', (err) => {
+                  console.error('Erreur appel invité:', err);
+                });
+
+                setActiveCalls(prev => [...prev, guestCall]);
+              }
+            }
+          });
+        }
+      });
 
       peer.on('error', (err) => {
         console.error('PeerJS error (viewer):', err);
@@ -240,11 +289,11 @@ const LiveRoomPage = () => {
         setPeerInstance(null);
       };
     }
-  }, [isHost, isGuest, currentUser, peerInstance]);
+  }, [isHost, isGuest, currentUser, peerInstance, live, guests]);
 
   // Realtime subscriptions
   useEffect(() => {
-    if (!liveId) return;
+    if (!liveId || !currentUser) return;
     const commentsSub = supabase.channel(`live-comments-${liveId}`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'live_comments', filter: `live_id=eq.${liveId}` },
         async (payload) => {
@@ -283,7 +332,7 @@ const LiveRoomPage = () => {
       supabase.removeChannel(viewersSub);
       supabase.removeChannel(reactionsSub);
     };
-  }, [liveId]);
+  }, [liveId, currentUser]);
 
   useEffect(() => {
     commentsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -480,6 +529,29 @@ const LiveRoomPage = () => {
         <div className="flex-1 relative bg-black min-h-0">
           {canStream && localStream ? (
             <video ref={videoRef} autoPlay muted playsInline className="w-full h-full object-contain" />
+          ) : remoteStreams.length > 0 ? (
+            <div className="absolute inset-0 grid gap-1" style={{
+              gridTemplateColumns: remoteStreams.length === 1 ? '1fr' : 'repeat(2, 1fr)',
+              gridTemplateRows: remoteStreams.length <= 2 ? '1fr' : 'repeat(2, 1fr)'
+            }}>
+              {remoteStreams.map((rs, idx) => (
+                <div key={rs.id} className="relative w-full h-full bg-gray-900">
+                  <video
+                    ref={idx === 0 ? videoRef : null}
+                    autoPlay
+                    playsInline
+                    className="w-full h-full object-contain"
+                    onLoadedMetadata={(e) => {
+                      e.target.srcObject = rs.stream;
+                      e.target.play().catch(console.error);
+                    }}
+                  />
+                  <div className="absolute bottom-2 left-2 bg-black/50 px-2 py-1 rounded text-white text-xs">
+                    {rs.type === 'host' ? 'Hôte' : 'Invité'}
+                  </div>
+                </div>
+              ))}
+            </div>
           ) : (
             <div className="absolute inset-0 flex items-center justify-center">
               <div className="text-center">

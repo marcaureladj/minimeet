@@ -44,6 +44,7 @@ const MeetRoomPage = () => {
   const mediaRecorderRef = useRef(null);
   const recordedChunksRef = useRef([]);
   const [downloadLink, setDownloadLink] = useState('');
+  const [recordingFormat, setRecordingFormat] = useState('webm');
   const [startTime, setStartTime] = useState(null);
   const [elapsedTime, setElapsedTime] = useState(0);
 
@@ -380,31 +381,7 @@ const MeetRoomPage = () => {
     return () => { supabase.removeChannel(sub); };
   }, [roomId]);
 
-  // Subscribe to whiteboard changes
-  useEffect(() => {
-    if (!roomId) return;
 
-    const whiteboardSub = supabase
-      .channel(`whiteboard:${roomId}`)
-      .on('postgres_changes', {
-        event: '*',
-        schema: 'public',
-        table: 'room_whiteboard',
-        filter: `room_id=eq.${roomId}`
-      }, (payload) => {
-        console.log('Whiteboard change:', payload);
-        if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
-          setIsWhiteboardActive(payload.new.is_active);
-          setWhiteboardInitiator(payload.new.initiator_id);
-        } else if (payload.eventType === 'DELETE') {
-          setIsWhiteboardActive(false);
-          setWhiteboardInitiator(null);
-        }
-      })
-      .subscribe();
-
-    return () => { supabase.removeChannel(whiteboardSub); };
-  }, [roomId]);
 
   // Leave room
   const performLeaveActions = async () => {
@@ -427,7 +404,9 @@ const MeetRoomPage = () => {
   const handleLeaveRoom = async () => { await performLeaveActions(); navigate('/dashboard'); };
 
   // Select main stream for display
+  // Select main stream for display
   const selectMainStream = (streamInfo) => {
+    if (mainDisplayedStreamInfo.id === streamInfo.id && mainDisplayedStreamInfo.isLocal === streamInfo.isLocal) return;
     setMainDisplayedStreamInfo({
       id: streamInfo.id,
       stream: streamInfo.stream,
@@ -461,17 +440,12 @@ const MeetRoomPage = () => {
         setLocalStream(cameraStreamRef.current);
         setMainDisplayedStreamInfo(prev => ({ ...prev, stream: cameraStreamRef.current, fullName: prev.fullName.replace(' (Écran)', '') }));
 
-        // Envoyer le stream caméra aux pairs
-        if (peerInstance) {
-          Object.values(connectedPeers).forEach(peerInfo => {
-            try {
-              peerInstance.call(peerInfo.peerId, cameraStreamRef.current);
-              console.log(`Stream caméra envoyé au pair ${peerInfo.peerId}`);
-            } catch (e) {
-              console.error(`Erreur envoi stream:`, e);
-            }
-          });
-        }
+        // Remplacer les tracks vidéo dans toutes les connexions
+        Object.values(connectedPeers).forEach(call => {
+          const videoTrack = cameraStreamRef.current.getVideoTracks()[0];
+          const sender = call.peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
+          if (sender && videoTrack) sender.replaceTrack(videoTrack);
+        });
       }
     } else {
       try {
@@ -481,35 +455,21 @@ const MeetRoomPage = () => {
         setLocalStream(stream);
         setMainDisplayedStreamInfo(prev => ({ ...prev, stream, fullName: prev.fullName + ' (Écran)' }));
 
-        // Envoyer le stream d'écran aux pairs
-        if (peerInstance) {
-          Object.values(connectedPeers).forEach(peerInfo => {
-            try {
-              peerInstance.call(peerInfo.peerId, stream);
-              console.log(`Stream d'écran envoyé au pair ${peerInfo.peerId}`);
-            } catch (e) {
-              console.error(`Erreur envoi stream:`, e);
-            }
-          });
-        }
+        // Remplacer les tracks vidéo dans toutes les connexions
+        Object.values(connectedPeers).forEach(call => {
+          const videoTrack = stream.getVideoTracks()[0];
+          const audioTrack = stream.getAudioTracks()[0];
+          const senders = call.peerConnection.getSenders();
+
+          const videoSender = senders.find(s => s.track && s.track.kind === 'video');
+          if (videoSender && videoTrack) videoSender.replaceTrack(videoTrack);
+
+          const audioSender = senders.find(s => s.track && s.track.kind === 'audio');
+          if (audioSender && audioTrack) audioSender.replaceTrack(audioTrack);
+        });
 
         stream.getVideoTracks()[0].onended = () => {
-          setIsScreenSharing(false); screenStreamRef.current = null;
-          if (cameraStreamRef.current) {
-            setLocalStream(cameraStreamRef.current);
-            setMainDisplayedStreamInfo(prev => ({ ...prev, stream: cameraStreamRef.current, fullName: prev.fullName.replace(' (Écran)', '') }));
-
-            // Renvoyer caméra aux pairs
-            if (peerInstance) {
-              Object.values(connectedPeers).forEach(peerInfo => {
-                try {
-                  peerInstance.call(peerInfo.peerId, cameraStreamRef.current);
-                } catch (e) {
-                  console.error('Erreur renvoi caméra:', e);
-                }
-              });
-            }
-          }
+          toggleScreenShare(); // Toggle back to camera
         };
       } catch (e) { if (e.name !== 'NotAllowedError') alert("Impossible de partager l'écran."); }
     }
@@ -531,18 +491,96 @@ const MeetRoomPage = () => {
   };
 
   // Recording
-  const startRecording = () => {
-    if (!localStream) return;
-    recordedChunksRef.current = [];
-    try { mediaRecorderRef.current = new MediaRecorder(localStream, { mimeType: 'video/webm;codecs=vp9,opus' }); }
-    catch { mediaRecorderRef.current = new MediaRecorder(localStream); }
-    mediaRecorderRef.current.ondataavailable = (e) => { if (e.data.size > 0) recordedChunksRef.current.push(e.data); };
-    mediaRecorderRef.current.onstop = () => { setDownloadLink(URL.createObjectURL(new Blob(recordedChunksRef.current, { type: 'video/webm' }))); };
-    mediaRecorderRef.current.start();
-    setIsRecording(true);
+  // Recording
+  const startRecording = async () => {
+    try {
+      const displayStream = await navigator.mediaDevices.getDisplayMedia({
+        video: { cursor: "always" },
+        audio: true
+      });
+
+      const audioContext = new AudioContext();
+      const dest = audioContext.createMediaStreamDestination();
+
+      if (displayStream.getAudioTracks().length > 0) {
+        const sysSource = audioContext.createMediaStreamSource(displayStream);
+        sysSource.connect(dest);
+      }
+
+      if (localStream && localStream.getAudioTracks().length > 0) {
+        const micSource = audioContext.createMediaStreamSource(localStream);
+        micSource.connect(dest);
+      }
+
+      const mixedTracks = [
+        displayStream.getVideoTracks()[0],
+        ...dest.stream.getAudioTracks()
+      ];
+      const combinedStream = new MediaStream(mixedTracks);
+
+      recordedChunksRef.current = [];
+
+      // Try MP4 first, then WebM
+      const mimeTypes = [
+        'video/mp4;codecs=avc1,mp4a.40.2',
+        'video/mp4',
+        'video/webm;codecs=vp9,opus',
+        'video/webm'
+      ];
+
+      let selectedMimeType = '';
+      for (const type of mimeTypes) {
+        if (MediaRecorder.isTypeSupported(type)) {
+          selectedMimeType = type;
+          break;
+        }
+      }
+
+      if (!selectedMimeType) {
+        alert('Aucun format d\'enregistrement supporté par ce navigateur.');
+        return;
+      }
+
+      const ext = selectedMimeType.includes('mp4') ? 'mp4' : 'webm';
+      setRecordingFormat(ext);
+
+      const recorder = new MediaRecorder(combinedStream, { mimeType: selectedMimeType });
+      mediaRecorderRef.current = recorder;
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) recordedChunksRef.current.push(e.data);
+      };
+
+      recorder.onstop = () => {
+        const blob = new Blob(recordedChunksRef.current, { type: selectedMimeType });
+        const url = URL.createObjectURL(blob);
+        setDownloadLink(url);
+        combinedStream.getTracks().forEach(track => track.stop());
+        displayStream.getTracks().forEach(track => track.stop());
+        audioContext.close();
+      };
+
+      // Stop recording if user stops screen sharing via browser UI
+      displayStream.getVideoTracks()[0].onended = () => {
+        stopRecording();
+      };
+
+      recorder.start();
+      setIsRecording(true);
+    } catch (err) {
+      console.error("Erreur enregistrement:", err);
+      if (err.name !== 'NotAllowedError') {
+        alert("Impossible de démarrer l'enregistrement de l'écran.");
+      }
+    }
   };
 
-  const stopRecording = () => { if (mediaRecorderRef.current && isRecording) { mediaRecorderRef.current.stop(); setIsRecording(false); } };
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+    }
+  };
 
   const copyRoomId = () => { navigator.clipboard.writeText(roomId); setCopiedId(true); setTimeout(() => setCopiedId(false), 2000); };
 
@@ -593,36 +631,38 @@ const MeetRoomPage = () => {
   }
 
   // Combine local and remote streams for display
-  const allStreams = [
-    {
-      id: mainDisplayedStreamInfo.id || 'local',
-      stream: mainDisplayedStreamInfo.stream,
-      isLocal: mainDisplayedStreamInfo.isLocal,
-      fullName: mainDisplayedStreamInfo.fullName,
-      email: mainDisplayedStreamInfo.email,
-      avatarUrl: mainDisplayedStreamInfo.avatarUrl || avatarUrl,
-      isCamOff: mainDisplayedStreamInfo.isLocal ? isCamOff : !mainDisplayedStreamInfo.stream?.getVideoTracks()[0]?.enabled,
-      isSpeaking: speakingPeers.local
-    },
-    ...remoteStreams.map(rs => ({
-      id: rs.id,
-      stream: rs.stream,
-      isLocal: false,
-      fullName: rs.fullName || 'Participant',
-      email: rs.email || '',
-      avatarUrl: null,
-      isCamOff: !rs.stream?.getVideoTracks()[0]?.enabled,
-      isSpeaking: false
-    }))
-  ].filter(s => s.stream);
+  // Combine local and remote streams for display
+  const localStreamObj = {
+    id: currentUser?.id || 'local',
+    stream: localStream,
+    isLocal: true,
+    fullName: 'Vous',
+    email: currentUser?.email,
+    avatarUrl: avatarUrl,
+    isCamOff: isCamOff,
+    isSpeaking: speakingPeers.local
+  };
 
-  const thumbnailStreams = allStreams.filter(s => {
-    // Exclure le stream actuellement affiché en grand
-    if (s.id === mainDisplayedStreamInfo.id && s.isLocal === mainDisplayedStreamInfo.isLocal) {
-      return false;
-    }
-    return true;
-  });
+  const remoteStreamsObjs = remoteStreams.map(rs => ({
+    id: rs.id,
+    stream: rs.stream,
+    isLocal: false,
+    fullName: rs.fullName || 'Participant',
+    email: rs.email || '',
+    avatarUrl: null,
+    isCamOff: !rs.stream?.getVideoTracks()[0]?.enabled,
+    isSpeaking: false
+  }));
+
+  // All available streams (Local + Remote)
+  const allStreams = [localStreamObj, ...remoteStreamsObjs].filter(s => s.stream);
+
+  // Determine which stream to display as main
+  // If mainDisplayedStreamInfo.id matches one in allStreams, use it. Otherwise default to local.
+  const activeMainStream = allStreams.find(s => s.id === mainDisplayedStreamInfo.id) || localStreamObj;
+
+  // Thumbnails are everyone ELSE
+  const thumbnailStreams = allStreams.filter(s => s.id !== activeMainStream.id);
 
   return (
     <div className="flex h-screen bg-gradient-to-br from-gray-100 to-gray-200">
@@ -689,35 +729,39 @@ const MeetRoomPage = () => {
             )}
 
             <div className="relative flex-1 bg-gradient-to-br from-gray-800 to-gray-900 rounded-3xl overflow-hidden">
-              {isWhiteboardActive ? (
-                <div className="absolute inset-0 bg-white">
+              {/* Whiteboard Overlay */}
+              {isWhiteboardActive && (
+                <div className="absolute inset-0 bg-white z-20">
                   <Whiteboard roomId={roomId} />
                   <div className="absolute top-4 left-4 bg-blue-600 text-white px-3 py-1.5 rounded-full text-sm font-medium flex items-center space-x-2">
                     <PenTool size={14} />
                     <span>Tableau blanc actif</span>
                   </div>
                 </div>
-              ) : mainDisplayedStreamInfo.stream ? (
-                <>
+              )}
+
+              {/* Main Video Player (Always rendered to keep audio, but maybe covered) */}
+              {activeMainStream.stream ? (
+                <div className="absolute inset-0 z-10">
                   <VideoPlayer
-                    stream={mainDisplayedStreamInfo.stream}
-                    isLocal={mainDisplayedStreamInfo.isLocal}
-                    muted={mainDisplayedStreamInfo.isLocal}
-                    isCamOff={mainDisplayedStreamInfo.isLocal ? isCamOff : !mainDisplayedStreamInfo.stream?.getVideoTracks()[0]?.enabled}
+                    stream={activeMainStream.stream}
+                    isLocal={activeMainStream.isLocal}
+                    muted={activeMainStream.isLocal}
+                    isCamOff={activeMainStream.isCamOff}
                     user={{
-                      avatar_url: mainDisplayedStreamInfo.avatarUrl || (mainDisplayedStreamInfo.isLocal ? avatarUrl : null),
-                      user_metadata: { full_name: mainDisplayedStreamInfo.fullName },
-                      email: mainDisplayedStreamInfo.email
+                      avatar_url: activeMainStream.avatarUrl,
+                      user_metadata: { full_name: activeMainStream.fullName },
+                      email: activeMainStream.email
                     }}
-                    isSpeaking={mainDisplayedStreamInfo.isLocal ? speakingPeers.local : false}
+                    isSpeaking={activeMainStream.isSpeaking}
                   />
                   <div className="absolute bottom-4 left-4 flex items-center space-x-2">
                     <div className="w-6 h-6 bg-white/40 backdrop-blur-sm rounded-full flex items-center justify-center">
                       <div className="w-3 h-3 bg-white rounded-full"></div>
                     </div>
-                    <span className="text-sm font-semibold text-white drop-shadow-lg">{mainDisplayedStreamInfo.fullName}</span>
+                    <span className="text-sm font-semibold text-white drop-shadow-lg">{activeMainStream.fullName}</span>
                   </div>
-                </>
+                </div>
               ) : (
                 <div className="flex items-center justify-center h-full text-gray-400">
                   <Video size={48} className="opacity-50" />
@@ -730,150 +774,173 @@ const MeetRoomPage = () => {
                 </div>
               )}
             </div>
-          </div>
 
-          {/* Controls */}
-          <div className="px-2 sm:px-6 pb-3 sm:pb-5 flex flex-col sm:flex-row items-center justify-between gap-3">
-            <div className="flex items-center space-x-2 text-gray-600">
-              <div className="w-5 h-5 border-2 border-gray-400 rounded-full flex items-center justify-center">
-                <div className={`w-2 h-2 rounded-full ${isRecording ? 'bg-red-500 animate-pulse' : 'bg-gray-400'}`}></div>
+            {/* Controls */}
+            <div className="px-2 sm:px-6 pb-3 sm:pb-5 flex flex-col sm:flex-row items-center justify-between gap-3">
+              <div className="flex items-center space-x-2 text-gray-600">
+                <div className="w-5 h-5 border-2 border-gray-400 rounded-full flex items-center justify-center">
+                  <div className={`w-2 h-2 rounded-full ${isRecording ? 'bg-red-500 animate-pulse' : 'bg-gray-400'}`}></div>
+                </div>
+                <span className="font-mono text-sm font-medium">{formatTime(elapsedTime)}</span>
               </div>
-              <span className="font-mono text-sm font-medium">{formatTime(elapsedTime)}</span>
-            </div>
 
-            <div className="flex items-center space-x-2 sm:space-x-3">
-              <button onClick={toggleMic} className={`w-11 h-11 sm:w-12 sm:h-12 rounded-full flex items-center justify-center ${isMicMuted ? 'bg-red-100 text-red-500' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
-                {isMicMuted ? <MicOff size={18} /> : <Mic size={18} />}
-              </button>
-              <button onClick={toggleCam} className={`w-12 h-12 sm:w-14 sm:h-14 rounded-full flex items-center justify-center shadow-lg ${isCamOff ? 'bg-red-500 text-white' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>
-                {isCamOff ? <VideoOff size={20} /> : <Video size={20} />}
-              </button>
-              <button onClick={toggleScreenShare} className={`hidden sm:flex w-12 h-12 rounded-full items-center justify-center ${isScreenSharing ? 'bg-blue-100 text-blue-600' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
-                {isScreenSharing ? <MonitorOff size={20} /> : <Monitor size={20} />}
-              </button>
-              <button onClick={toggleWhiteboard} className={`hidden sm:flex w-12 h-12 rounded-full items-center justify-center ${isWhiteboardActive ? 'bg-purple-100 text-purple-600' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`} title="Tableau blanc">
-                <PenTool size={20} />
-              </button>
-              <button onClick={isRecording ? stopRecording : startRecording} className={`hidden sm:flex w-12 h-12 rounded-full items-center justify-center ${isRecording ? 'bg-red-500 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
-                <Circle size={20} className={isRecording ? 'fill-current' : ''} />
-              </button>
-              <button onClick={handleLeaveRoom} className="w-11 h-11 sm:w-12 sm:h-12 bg-red-500 rounded-full flex items-center justify-center hover:bg-red-600">
-                <PhoneOff size={18} className="text-white" />
-              </button>
-            </div>
+              <div className="flex items-center space-x-3 sm:space-x-6">
+                <div className="flex flex-col items-center gap-1">
+                  <button onClick={toggleMic} className={`w-11 h-11 sm:w-12 sm:h-12 rounded-full flex items-center justify-center transition-all ${isMicMuted ? 'bg-red-100 text-red-500 ring-2 ring-red-200' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
+                    {isMicMuted ? <MicOff size={20} /> : <Mic size={20} />}
+                  </button>
+                  <span className="text-[10px] sm:text-xs font-medium text-gray-600">Micro</span>
+                </div>
 
-            <div className="flex items-center space-x-2">
-              {downloadLink && (
-                <a href={downloadLink} download={`meeting-${roomId}.webm`} className="flex items-center space-x-2 px-3 py-2 bg-green-100 text-green-600 rounded-xl hover:bg-green-200">
-                  <Download size={16} /><span className="text-sm font-medium">Télécharger</span>
-                </a>
-              )}
+                <div className="flex flex-col items-center gap-1">
+                  <button onClick={toggleCam} className={`w-12 h-12 sm:w-14 sm:h-14 rounded-full flex items-center justify-center shadow-lg transition-all transform hover:scale-105 ${isCamOff ? 'bg-red-500 text-white' : 'bg-blue-600 text-white hover:bg-blue-700'}`}>
+                    {isCamOff ? <VideoOff size={24} /> : <Video size={24} />}
+                  </button>
+                  <span className="text-[10px] sm:text-xs font-medium text-gray-600">Caméra</span>
+                </div>
+
+                <div className="hidden sm:flex flex-col items-center gap-1">
+                  <button onClick={toggleScreenShare} className={`w-12 h-12 rounded-full flex items-center justify-center transition-all ${isScreenSharing ? 'bg-blue-100 text-blue-600 ring-2 ring-blue-200' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
+                    {isScreenSharing ? <MonitorOff size={20} /> : <Monitor size={20} />}
+                  </button>
+                  <span className="text-[10px] sm:text-xs font-medium text-gray-600">Partage</span>
+                </div>
+
+                <div className="hidden sm:flex flex-col items-center gap-1">
+                  <button onClick={toggleWhiteboard} className={`w-12 h-12 rounded-full flex items-center justify-center transition-all ${isWhiteboardActive ? 'bg-purple-100 text-purple-600 ring-2 ring-purple-200' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`} title="Tableau blanc">
+                    <PenTool size={20} />
+                  </button>
+                  <span className="text-[10px] sm:text-xs font-medium text-gray-600">Tableau</span>
+                </div>
+
+                <div className="hidden sm:flex flex-col items-center gap-1">
+                  <button onClick={isRecording ? stopRecording : startRecording} className={`w-12 h-12 rounded-full flex items-center justify-center transition-all ${isRecording ? 'bg-red-500 text-white animate-pulse' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'}`}>
+                    <Circle size={20} className={isRecording ? 'fill-current' : ''} />
+                  </button>
+                  <span className="text-[10px] sm:text-xs font-medium text-gray-600">Enreg.</span>
+                </div>
+
+                <div className="flex flex-col items-center gap-1">
+                  <button onClick={handleLeaveRoom} className="w-11 h-11 sm:w-12 sm:h-12 bg-red-500 rounded-full flex items-center justify-center hover:bg-red-600 transition-all shadow-lg hover:shadow-red-200">
+                    <PhoneOff size={20} className="text-white" />
+                  </button>
+                  <span className="text-[10px] sm:text-xs font-medium text-gray-600">Quitter</span>
+                </div>
+              </div>
+
+              <div className="flex items-center space-x-2">
+                {downloadLink && (
+                  <a href={downloadLink} download={`meeting-${roomId}.${recordingFormat}`} className="flex items-center space-x-2 px-3 py-2 bg-green-100 text-green-600 rounded-xl hover:bg-green-200">
+                    <Download size={16} /><span className="text-sm font-medium">Télécharger ({recordingFormat.toUpperCase()})</span>
+                  </a>
+                )}
+              </div>
             </div>
           </div>
         </div>
-      </div>
 
-      {/* Sidebar - Modal sur mobile, sidebar sur desktop */}
-      {showSidebar && (
-        <>
-          {/* Overlay mobile */}
-          <div className="fixed inset-0 bg-black/50 z-40 lg:hidden" onClick={() => setShowSidebar(false)} />
+        {/* Sidebar - Modal sur mobile, sidebar sur desktop */}
+        {showSidebar && (
+          <>
+            {/* Overlay mobile */}
+            <div className="fixed inset-0 bg-black/50 z-40 lg:hidden" onClick={() => setShowSidebar(false)} />
 
-          {/* Sidebar content */}
-          <div className="fixed lg:relative top-0 right-0 h-full w-full sm:w-96 lg:w-80 bg-white p-4 sm:p-6 flex flex-col shadow-xl z-50 transform transition-transform duration-300 lg:transform-none">
-            {/* Close button mobile */}
-            <button onClick={() => setShowSidebar(false)} className="lg:hidden absolute top-4 right-4 p-2 hover:bg-gray-100 rounded-lg">
-              <X size={20} className="text-gray-600" />
-            </button>
-            <h2 className="text-xl font-bold text-gray-900 mb-4">Panneau</h2>
-            <div className="grid grid-cols-3 gap-1 mb-4 p-1 bg-gray-100 rounded-xl">
-              {[
-                { id: 'participants', icon: Users, label: 'Participants' },
-                { id: 'chat', icon: MessageCircle, label: 'Chat' },
-                { id: 'tasks', icon: ListTodo, label: 'Tâches' },
-              ].map((tab) => {
-                const Icon = tab.icon;
-                return (
-                  <button key={tab.id} onClick={() => setActiveTab(tab.id)} title={tab.label}
-                    className={`p-2.5 rounded-lg flex items-center justify-center ${activeTab === tab.id ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
-                    <Icon size={16} />
-                  </button>
-                );
-              })}
-            </div>
+            {/* Sidebar content */}
+            <div className="fixed lg:relative top-0 right-0 h-full w-full sm:w-96 lg:w-80 bg-white p-4 sm:p-6 flex flex-col shadow-xl z-50 transform transition-transform duration-300 lg:transform-none">
+              {/* Close button mobile */}
+              <button onClick={() => setShowSidebar(false)} className="lg:hidden absolute top-4 right-4 p-2 hover:bg-gray-100 rounded-lg">
+                <X size={20} className="text-gray-600" />
+              </button>
+              <h2 className="text-xl font-bold text-gray-900 mb-4">Panneau</h2>
+              <div className="grid grid-cols-3 gap-1 mb-4 p-1 bg-gray-100 rounded-xl">
+                {[
+                  { id: 'participants', icon: Users, label: 'Participants' },
+                  { id: 'chat', icon: MessageCircle, label: 'Chat' },
+                  { id: 'tasks', icon: ListTodo, label: 'Tâches' },
+                ].map((tab) => {
+                  const Icon = tab.icon;
+                  return (
+                    <button key={tab.id} onClick={() => setActiveTab(tab.id)} title={tab.label}
+                      className={`p-2.5 rounded-lg flex items-center justify-center ${activeTab === tab.id ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}>
+                      <Icon size={16} />
+                    </button>
+                  );
+                })}
+              </div>
 
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-semibold text-gray-700">
-                {activeTab === 'participants' && `Participants (${allStreams.length})`}
-                {activeTab === 'chat' && 'Chat'}
-                {activeTab === 'tasks' && 'Liste de tâches'}
-              </h3>
-            </div>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-semibold text-gray-700">
+                  {activeTab === 'participants' && `Participants (${allStreams.length})`}
+                  {activeTab === 'chat' && 'Chat'}
+                  {activeTab === 'tasks' && 'Liste de tâches'}
+                </h3>
+              </div>
 
-            <div className="flex-1 overflow-hidden flex flex-col min-h-0">
-              {activeTab === 'participants' && (
-                <div className="flex-1 overflow-y-auto space-y-2">
-                  {allStreams.map((s) => (
-                    <div key={s.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl hover:bg-gray-100">
-                      <div className="flex items-center space-x-3">
-                        <Avatar
-                          user={{
-                            avatar_url: s.avatarUrl,
-                            user_metadata: { full_name: s.fullName },
-                            email: s.email
-                          }}
-                          size="md"
-                        />
-                        <div>
-                          <p className="text-sm font-semibold text-gray-900">{s.isLocal ? 'Vous' : s.fullName}</p>
-                          <p className="text-xs text-gray-500">{s.email?.split('@')[0] || ''}</p>
+              <div className="flex-1 overflow-hidden flex flex-col min-h-0">
+                {activeTab === 'participants' && (
+                  <div className="flex-1 overflow-y-auto space-y-2">
+                    {allStreams.map((s) => (
+                      <div key={s.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-xl hover:bg-gray-100">
+                        <div className="flex items-center space-x-3">
+                          <Avatar
+                            user={{
+                              avatar_url: s.avatarUrl,
+                              user_metadata: { full_name: s.fullName },
+                              email: s.email
+                            }}
+                            size="md"
+                          />
+                          <div>
+                            <p className="text-sm font-semibold text-gray-900">{s.isLocal ? 'Vous' : s.fullName}</p>
+                            <p className="text-xs text-gray-500">{s.email?.split('@')[0] || ''}</p>
+                          </div>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          {s.isLocal ? (
+                            <>{isMicMuted ? <MicOff size={16} className="text-gray-400" /> : <Mic size={16} className="text-gray-600" />}
+                              {isCamOff ? <VideoOff size={16} className="text-gray-400" /> : <Video size={16} className="text-gray-600" />}</>
+                          ) : (<><Mic size={16} className="text-gray-600" /><Video size={16} className="text-gray-600" /></>)}
                         </div>
                       </div>
-                      <div className="flex items-center space-x-2">
-                        {s.isLocal ? (
-                          <>{isMicMuted ? <MicOff size={16} className="text-gray-400" /> : <Mic size={16} className="text-gray-600" />}
-                            {isCamOff ? <VideoOff size={16} className="text-gray-400" /> : <Video size={16} className="text-gray-600" />}</>
-                        ) : (<><Mic size={16} className="text-gray-600" /><Video size={16} className="text-gray-600" /></>)}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {activeTab === 'chat' && <ChatBox roomId={roomId} />}
-              {activeTab === 'tasks' && <SharedTodoList roomId={roomId} currentUser={currentUser} />}
-            </div>
+                    ))}
+                  </div>
+                )}
+                {activeTab === 'chat' && <ChatBox roomId={roomId} />}
+                {activeTab === 'tasks' && <SharedTodoList roomId={roomId} currentUser={currentUser} />}
+              </div>
 
-            <button onClick={copyRoomId} className="mt-4 w-full py-3 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 flex items-center justify-center space-x-2 shadow-lg">
-              <UserPlus size={20} /><span>Inviter des personnes</span>
-            </button>
-          </div>
-        </>
-      )}
-
-      {/* Report Room Modal */}
-      {showReportModal && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-xl">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="font-bold text-gray-900">Signaler cette salle</h3>
-              <button onClick={() => setShowReportModal(false)} className="p-1 hover:bg-gray-100 rounded-lg">
-                <X size={18} />
+              <button onClick={copyRoomId} className="mt-4 w-full py-3 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 flex items-center justify-center space-x-2 shadow-lg">
+                <UserPlus size={20} /><span>Inviter des personnes</span>
               </button>
             </div>
-            <div className="space-y-2">
-              {['Contenu inapproprié', 'Spam', 'Harcèlement', 'Activité illégale', 'Autre'].map((reason) => (
-                <button
-                  key={reason}
-                  onClick={() => handleReportRoom(reason)}
-                  className="w-full p-3 text-left text-sm bg-gray-50 hover:bg-gray-100 rounded-xl transition-colors"
-                >
-                  {reason}
+          </>
+        )}
+
+        {/* Report Room Modal */}
+        {showReportModal && (
+          <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-xl">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-bold text-gray-900">Signaler cette salle</h3>
+                <button onClick={() => setShowReportModal(false)} className="p-1 hover:bg-gray-100 rounded-lg">
+                  <X size={18} />
                 </button>
-              ))}
+              </div>
+              <div className="space-y-2">
+                {['Contenu inapproprié', 'Spam', 'Harcèlement', 'Activité illégale', 'Autre'].map((reason) => (
+                  <button
+                    key={reason}
+                    onClick={() => handleReportRoom(reason)}
+                    className="w-full p-3 text-left text-sm bg-gray-50 hover:bg-gray-100 rounded-xl transition-colors"
+                  >
+                    {reason}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 };

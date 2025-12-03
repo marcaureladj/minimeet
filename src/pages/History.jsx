@@ -4,7 +4,7 @@ import { supabase } from '../services/supabaseClient';
 import { generateMeetingSummary } from '../services/openRouterClient';
 import {
   Clock, Users, Calendar, Sparkles, Loader2, ChevronDown, ChevronUp,
-  FileText, Copy, Check, ArrowLeft, Menu
+  FileText, Copy, Check, ArrowLeft, Menu, RefreshCw
 } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
 import Avatar from '../components/Avatar';
@@ -288,11 +288,25 @@ const HistoryPage = () => {
                                 <Sparkles size={16} className="text-purple-500" />
                                 <span>Résumé IA</span>
                               </h4>
-                              {meeting.summary && (
-                                <button onClick={() => copyToClipboard(meeting.summary.summary, `summary-${meeting.id}`)}>
-                                  {copied === `summary-${meeting.id}` ? <Check size={14} className="text-green-500" /> : <Copy size={14} className="text-gray-400" />}
+                              <div className="flex items-center space-x-2">
+                                <button
+                                  onClick={() => generateSummaryForMeeting(meeting)}
+                                  disabled={generatingSummary === meeting.id}
+                                  className="p-1.5 hover:bg-gray-100 rounded-lg text-purple-600 transition-colors"
+                                  title="Régénérer le résumé"
+                                >
+                                  {generatingSummary === meeting.id ? (
+                                    <Loader2 size={16} className="animate-spin" />
+                                  ) : (
+                                    <RefreshCw size={16} />
+                                  )}
                                 </button>
-                              )}
+                                {meeting.summary && (
+                                  <button onClick={() => copyToClipboard(meeting.summary.summary, `summary-${meeting.id}`)} className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-400 hover:text-gray-600 transition-colors" title="Copier">
+                                    {copied === `summary-${meeting.id}` ? <Check size={16} className="text-green-500" /> : <Copy size={16} />}
+                                  </button>
+                                )}
+                              </div>
                             </div>
 
                             {meeting.summary ? (
@@ -353,8 +367,8 @@ const HistoryPage = () => {
                                             <p className="text-sm text-gray-900 font-medium flex-1">{item.task}</p>
                                             {item.priority && (
                                               <span className={`ml-2 px-2 py-0.5 rounded text-xs font-medium ${item.priority === 'high' ? 'bg-red-100 text-red-700' :
-                                                  item.priority === 'medium' ? 'bg-yellow-100 text-yellow-700' :
-                                                    'bg-gray-100 text-gray-700'
+                                                item.priority === 'medium' ? 'bg-yellow-100 text-yellow-700' :
+                                                  'bg-gray-100 text-gray-700'
                                                 }`}>
                                                 {item.priority === 'high' ? 'Haute' : item.priority === 'medium' ? 'Moyenne' : 'Basse'}
                                               </span>

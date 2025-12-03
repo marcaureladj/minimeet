@@ -61,8 +61,12 @@ const Whiteboard = ({ roomId }) => {
       try {
         await supabase
           .from('room_whiteboard')
-          .update({ canvas_data: canvasData, updated_at: new Date().toISOString() })
-          .eq('room_id', roomId);
+          .upsert({
+            room_id: roomId,
+            canvas_data: canvasData,
+            updated_at: new Date().toISOString(),
+            is_active: true
+          }, { onConflict: 'room_id' });
       } catch (e) {
         console.error('Erreur sauvegarde canvas:', e);
       }
@@ -174,6 +178,21 @@ const Whiteboard = ({ roomId }) => {
   useEffect(() => {
     if (!roomId) return;
 
+    // Charger les données initiales du canvas
+    const loadInitialCanvas = async () => {
+      const { data } = await supabase
+        .from('room_whiteboard')
+        .select('canvas_data')
+        .eq('room_id', roomId)
+        .single();
+
+      if (data?.canvas_data) {
+        loadState(data.canvas_data);
+      }
+    };
+
+    loadInitialCanvas();
+
     const canvasSub = supabase
       .channel(`whiteboard-canvas:${roomId}`)
       .on('postgres_changes', {
@@ -214,8 +233,8 @@ const Whiteboard = ({ roomId }) => {
                 onClick={() => setTool(t.id)}
                 title={t.label}
                 className={`p-2 rounded-lg transition-all ${tool === t.id
-                    ? 'bg-blue-100 text-blue-600'
-                    : 'text-gray-600 hover:bg-gray-100'
+                  ? 'bg-blue-100 text-blue-600'
+                  : 'text-gray-600 hover:bg-gray-100'
                   }`}
               >
                 <Icon size={18} />
