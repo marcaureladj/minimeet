@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../services/supabaseClient';
-import { Mail, Lock, ArrowRight, Video } from 'lucide-react';
+import { Mail, Lock, ArrowRight, Video, Eye, EyeOff } from 'lucide-react';
 
 const LoginPage = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [showPassword, setShowPassword] = useState(false);
   const navigate = useNavigate();
 
   const handleLogin = async (e) => {
@@ -34,10 +35,10 @@ const LoginPage = () => {
             <div className="bg-white rounded-xl p-2">
               <img src="/logo-minimeet.png" alt="MiniMeet" className="h-10" />
             </div>
-           
+
           </div>
         </div>
-        
+
         <div className="space-y-6">
           <h1 className="text-4xl font-bold text-white leading-tight">
             Connectez-vous avec<br />vos équipes, partout.
@@ -70,7 +71,7 @@ const LoginPage = () => {
             <div className="bg-white rounded-xl p-2 shadow-md">
               <img src="/logo-minimeet.png" alt="MiniMeet" className="h-10" />
             </div>
-           
+
           </div>
 
           <div className="bg-white rounded-3xl shadow-xl p-8">
@@ -105,14 +106,21 @@ const LoginPage = () => {
                 <div className="relative">
                   <Lock size={20} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
                   <input
-                    type="password"
+                    type={showPassword ? "text" : "password"}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="••••••••"
                     required
                     disabled={loading}
-                    className="w-full pl-12 pr-4 py-3.5 border border-gray-200 rounded-xl bg-gray-50 text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent focus:bg-white transition-all"
+                    className="w-full pl-12 pr-12 py-3.5 border border-gray-200 rounded-xl bg-gray-50 text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent focus:bg-white transition-all"
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
+                  >
+                    {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+                  </button>
                 </div>
               </div>
 

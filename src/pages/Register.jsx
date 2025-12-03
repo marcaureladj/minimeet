@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../services/supabaseClient';
-import { Mail, Lock, User, ArrowRight, Video, CheckCircle } from 'lucide-react';
+import { Mail, Lock, User, ArrowRight, Video, CheckCircle, Eye, EyeOff } from 'lucide-react';
 
 const RegisterPage = () => {
   const [email, setEmail] = useState('');
@@ -11,6 +11,8 @@ const RegisterPage = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const navigate = useNavigate();
 
   const handleRegister = async (e) => {
@@ -42,7 +44,24 @@ const RegisterPage = () => {
       if (signUpError) throw signUpError;
       if (!signUpData.user) throw new Error("Erreur lors de la création du compte.");
 
-      await supabase.auth.updateUser({ data: { full_name: fullName.trim() } });
+      // Créer le profil dans la table profiles
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .insert({
+          id: signUpData.user.id,
+          full_name: fullName.trim(),
+          username: null,
+          avatar_url: null
+        });
+
+      if (profileError) {
+        console.error('Erreur lors de la création du profil:', profileError);
+        // Ne pas bloquer l'inscription si le profil existe déjà
+        if (!profileError.message.includes('duplicate key')) {
+          throw new Error('Erreur lors de la sauvegarde du profil');
+        }
+      }
+
       setSuccess("Compte créé avec succès !");
       setTimeout(() => navigate('/dashboard'), 1500);
     } catch (error) {
@@ -61,10 +80,10 @@ const RegisterPage = () => {
             <div className="bg-white rounded-xl p-2">
               <img src="/logo-minimeet.png" alt="MiniMeet" className="h-10" />
             </div>
-           
+
           </div>
         </div>
-        
+
         <div className="space-y-6">
           <h1 className="text-4xl font-bold text-white leading-tight">
             Rejoignez la<br />communauté MiniMeet
@@ -93,7 +112,7 @@ const RegisterPage = () => {
             <div className="bg-white rounded-xl p-2 shadow-md">
               <img src="/logo-minimeet.png" alt="MiniMeet" className="h-10" />
             </div>
-            
+
           </div>
 
           <div className="bg-white rounded-3xl shadow-xl p-8">
@@ -140,14 +159,21 @@ const RegisterPage = () => {
                 <div className="relative">
                   <Lock size={20} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
                   <input
-                    type="password"
+                    type={showPassword ? "text" : "password"}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder="Min. 6 caractères"
                     required
                     disabled={loading}
-                    className="w-full pl-12 pr-4 py-3.5 border border-gray-200 rounded-xl bg-gray-50 text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent focus:bg-white transition-all"
+                    className="w-full pl-12 pr-12 py-3.5 border border-gray-200 rounded-xl bg-gray-50 text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent focus:bg-white transition-all"
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
+                  >
+                    {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+                  </button>
                 </div>
               </div>
 
@@ -156,14 +182,21 @@ const RegisterPage = () => {
                 <div className="relative">
                   <Lock size={20} className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400" />
                   <input
-                    type="password"
+                    type={showConfirmPassword ? "text" : "password"}
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
                     placeholder="••••••••"
                     required
                     disabled={loading}
-                    className="w-full pl-12 pr-4 py-3.5 border border-gray-200 rounded-xl bg-gray-50 text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent focus:bg-white transition-all"
+                    className="w-full pl-12 pr-12 py-3.5 border border-gray-200 rounded-xl bg-gray-50 text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent focus:bg-white transition-all"
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                    className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors"
+                  >
+                    {showConfirmPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+                  </button>
                 </div>
               </div>
 
