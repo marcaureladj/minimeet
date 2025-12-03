@@ -1,6 +1,7 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { 
-  Pencil, Eraser, Square, Circle as CircleIcon, Minus, Type, 
+import { supabase } from '../services/supabaseClient';
+import {
+  Pencil, Eraser, Square, Circle as CircleIcon, Minus, Type,
   Trash2, Download, Undo, Redo, Palette, MousePointer
 } from 'lucide-react';
 
@@ -47,12 +48,25 @@ const Whiteboard = ({ roomId }) => {
     }
   }, [color, lineWidth, tool]);
 
-  const saveState = () => {
+  const saveState = async () => {
     const canvas = canvasRef.current;
     const newHistory = history.slice(0, historyIndex + 1);
-    newHistory.push(canvas.toDataURL());
+    const canvasData = canvas.toDataURL();
+    newHistory.push(canvasData);
     setHistory(newHistory);
     setHistoryIndex(newHistory.length - 1);
+
+    // Sauvegarder dans Supabase pour synchronisation
+    if (roomId) {
+      try {
+        await supabase
+          .from('room_whiteboard')
+          .update({ canvas_data: canvasData, updated_at: new Date().toISOString() })
+          .eq('room_id', roomId);
+      } catch (e) {
+        console.error('Erreur sauvegarde canvas:', e);
+      }
+    }
   };
 
   const undo = () => {
@@ -140,12 +154,12 @@ const Whiteboard = ({ roomId }) => {
     saveState();
   };
 
-  const clearCanvas = () => {
+  const clearCanvas = async () => {
     const canvas = canvasRef.current;
     const context = contextRef.current;
     context.fillStyle = '#FFFFFF';
     context.fillRect(0, 0, canvas.offsetWidth, canvas.offsetHeight);
-    saveState();
+    await saveState();
   };
 
   const downloadCanvas = () => {
@@ -155,6 +169,28 @@ const Whiteboard = ({ roomId }) => {
     link.href = canvas.toDataURL('image/png');
     link.click();
   };
+
+  // Subscribe to canvas changes from other users
+  useEffect(() => {
+    if (!roomId) return;
+
+    const canvasSub = supabase
+      .channel(`whiteboard-canvas:${roomId}`)
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'room_whiteboard',
+        filter: `room_id=eq.${roomId}`
+      }, (payload) => {
+        if (payload.new.canvas_data) {
+          // Charger les données du canvas depuis un autre utilisateur
+          loadState(payload.new.canvas_data);
+        }
+      })
+      .subscribe();
+
+    return () => { supabase.removeChannel(canvasSub); };
+  }, [roomId]);
 
   const tools = [
     { id: 'select', icon: MousePointer, label: 'Sélection' },
@@ -177,19 +213,18 @@ const Whiteboard = ({ roomId }) => {
                 key={t.id}
                 onClick={() => setTool(t.id)}
                 title={t.label}
-                className={`p-2 rounded-lg transition-all ${
-                  tool === t.id
+                className={`p-2 rounded-lg transition-all ${tool === t.id
                     ? 'bg-blue-100 text-blue-600'
                     : 'text-gray-600 hover:bg-gray-100'
-                }`}
+                  }`}
               >
                 <Icon size={18} />
               </button>
             );
           })}
-          
+
           <div className="w-px h-6 bg-gray-200 mx-2" />
-          
+
           {/* Color picker */}
           <div className="relative">
             <button
@@ -206,9 +241,8 @@ const Whiteboard = ({ roomId }) => {
                     <button
                       key={c}
                       onClick={() => { setColor(c); setShowColorPicker(false); }}
-                      className={`w-7 h-7 rounded-full border-2 transition-transform hover:scale-110 ${
-                        color === c ? 'border-blue-500 scale-110' : 'border-gray-200'
-                      }`}
+                      className={`w-7 h-7 rounded-full border-2 transition-transform hover:scale-110 ${color === c ? 'border-blue-500 scale-110' : 'border-gray-200'
+                        }`}
                       style={{ backgroundColor: c }}
                     />
                   ))}
@@ -223,9 +257,8 @@ const Whiteboard = ({ roomId }) => {
               <button
                 key={s}
                 onClick={() => setLineWidth(s)}
-                className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all ${
-                  lineWidth === s ? 'bg-blue-100' : 'hover:bg-gray-100'
-                }`}
+                className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all ${lineWidth === s ? 'bg-blue-100' : 'hover:bg-gray-100'
+                  }`}
               >
                 <div
                   className="rounded-full bg-gray-800"

@@ -380,6 +380,32 @@ const MeetRoomPage = () => {
     return () => { supabase.removeChannel(sub); };
   }, [roomId]);
 
+  // Subscribe to whiteboard changes
+  useEffect(() => {
+    if (!roomId) return;
+
+    const whiteboardSub = supabase
+      .channel(`whiteboard:${roomId}`)
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'room_whiteboard',
+        filter: `room_id=eq.${roomId}`
+      }, (payload) => {
+        console.log('Whiteboard change:', payload);
+        if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+          setIsWhiteboardActive(payload.new.is_active);
+          setWhiteboardInitiator(payload.new.initiator_id);
+        } else if (payload.eventType === 'DELETE') {
+          setIsWhiteboardActive(false);
+          setWhiteboardInitiator(null);
+        }
+      })
+      .subscribe();
+
+    return () => { supabase.removeChannel(whiteboardSub); };
+  }, [roomId]);
+
   // Leave room
   const performLeaveActions = async () => {
     if (isRecording) stopRecording();
@@ -399,6 +425,18 @@ const MeetRoomPage = () => {
   };
 
   const handleLeaveRoom = async () => { await performLeaveActions(); navigate('/dashboard'); };
+
+  // Select main stream for display
+  const selectMainStream = (streamInfo) => {
+    setMainDisplayedStreamInfo({
+      id: streamInfo.id,
+      stream: streamInfo.stream,
+      isLocal: streamInfo.isLocal,
+      fullName: streamInfo.fullName,
+      email: streamInfo.email,
+      avatarUrl: streamInfo.avatarUrl
+    });
+  };
 
   // Media controls
   const toggleMic = () => {
@@ -422,6 +460,18 @@ const MeetRoomPage = () => {
       if (cameraStreamRef.current) {
         setLocalStream(cameraStreamRef.current);
         setMainDisplayedStreamInfo(prev => ({ ...prev, stream: cameraStreamRef.current, fullName: prev.fullName.replace(' (Écran)', '') }));
+
+        // Envoyer le stream caméra aux pairs
+        if (peerInstance) {
+          Object.values(connectedPeers).forEach(peerInfo => {
+            try {
+              peerInstance.call(peerInfo.peerId, cameraStreamRef.current);
+              console.log(`Stream caméra envoyé au pair ${peerInfo.peerId}`);
+            } catch (e) {
+              console.error(`Erreur envoi stream:`, e);
+            }
+          });
+        }
       }
     } else {
       try {
@@ -430,11 +480,35 @@ const MeetRoomPage = () => {
         setIsScreenSharing(true);
         setLocalStream(stream);
         setMainDisplayedStreamInfo(prev => ({ ...prev, stream, fullName: prev.fullName + ' (Écran)' }));
+
+        // Envoyer le stream d'écran aux pairs
+        if (peerInstance) {
+          Object.values(connectedPeers).forEach(peerInfo => {
+            try {
+              peerInstance.call(peerInfo.peerId, stream);
+              console.log(`Stream d'écran envoyé au pair ${peerInfo.peerId}`);
+            } catch (e) {
+              console.error(`Erreur envoi stream:`, e);
+            }
+          });
+        }
+
         stream.getVideoTracks()[0].onended = () => {
           setIsScreenSharing(false); screenStreamRef.current = null;
           if (cameraStreamRef.current) {
             setLocalStream(cameraStreamRef.current);
             setMainDisplayedStreamInfo(prev => ({ ...prev, stream: cameraStreamRef.current, fullName: prev.fullName.replace(' (Écran)', '') }));
+
+            // Renvoyer caméra aux pairs
+            if (peerInstance) {
+              Object.values(connectedPeers).forEach(peerInfo => {
+                try {
+                  peerInstance.call(peerInfo.peerId, cameraStreamRef.current);
+                } catch (e) {
+                  console.error('Erreur renvoi caméra:', e);
+                }
+              });
+            }
           }
         };
       } catch (e) { if (e.name !== 'NotAllowedError') alert("Impossible de partager l'écran."); }
@@ -471,7 +545,6 @@ const MeetRoomPage = () => {
   const stopRecording = () => { if (mediaRecorderRef.current && isRecording) { mediaRecorderRef.current.stop(); setIsRecording(false); } };
 
   const copyRoomId = () => { navigator.clipboard.writeText(roomId); setCopiedId(true); setTimeout(() => setCopiedId(false), 2000); };
-  const selectMainStream = (info) => setMainDisplayedStreamInfo(info);
 
   const handleReportRoom = async (reason) => {
     if (!currentUser || !roomId) return;
@@ -543,7 +616,13 @@ const MeetRoomPage = () => {
     }))
   ].filter(s => s.stream);
 
-  const thumbnailStreams = allStreams.filter(s => s.id !== mainDisplayedStreamInfo.id || !mainDisplayedStreamInfo.isLocal);
+  const thumbnailStreams = allStreams.filter(s => {
+    // Exclure le stream actuellement affiché en grand
+    if (s.id === mainDisplayedStreamInfo.id && s.isLocal === mainDisplayedStreamInfo.isLocal) {
+      return false;
+    }
+    return true;
+  });
 
   return (
     <div className="flex h-screen bg-gradient-to-br from-gray-100 to-gray-200">

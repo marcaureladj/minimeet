@@ -1,0 +1,99 @@
+// Instructions pour modifier LiveRoom.jsx manuellement
+
+// MODIFICATION 1 : Ligne 183 - Changer la condition
+// AVANT:
+if (isHost && currentUser && localStream) {
+
+// APRÈS:
+if ((isHost || isGuest) && currentUser && localStream) {
+
+// MODIFICATION 2 : Ligne 190 - Changer le console.log
+// AVANT:
+console.log('Hôte répond à l\'appel d\'un spectateur');
+
+// APRÈS:
+console.log(`${isHost ? 'Hôte' : 'Invité'} répond à l'appel d'un spectateur`);
+
+// MODIFICATION 3 : Ligne 202 - Ajouter isGuest dans les dépendances
+// AVANT:
+}, [isHost, currentUser, localStream]);
+
+// APRÈS:
+}, [isHost, isGuest, currentUser, localStream]);
+
+// MODIFICATION 4 : Ligne 206 - Remplacer toute la logique du spectateur (lignes 204-226)
+// AVANT:
+  // For viewers: call the host to receive stream
+  useEffect(() => {
+    if (!isHost && peerInstance && live?.host_id && !isGuest) {
+      console.log(`Spectateur appelle l'hôte ${live.host_id}`);
+      const call = peerInstance.call(live.host_id, null);
+      
+      call.on('stream', (remoteStream) => {
+        console.log('Spectateur reçoit le stream de l\'hôte');
+        if (videoRef.current) {
+          videoRef.current.srcObject = remoteStream;
+          videoRef.current.play().catch(e => console.error('Erreur lecture vidéo:', e));
+        }
+        setRemoteStreams([remoteStream]);
+      });
+      
+      call.on('error', (err) => {
+        console.error('Erreur lors de l\'appel:', err);
+      });
+      
+      setActiveCalls([call]);
+    }
+  }, [isHost, peerInstance, live, isGuest]);
+
+// APRÈS:
+  // For viewers: call host AND guests to receive all streams
+  useEffect(() => {
+    if (!isHost && !isGuest && peerInstance && live?.host_id) {
+      const calls = [];
+      
+      // Appeler l'hôte
+      console.log(`Spectateur appelle l'hôte ${live.host_id}`);
+      const hostCall = peerInstance.call(live.host_id, null);
+      
+      hostCall.on('stream', (remoteStream) => {
+        console.log('Spectateur reçoit le stream de l\'hôte');
+        if (videoRef.current) {
+          videoRef.current.srcObject = remoteStream;
+          videoRef.current.play().catch(e => console.error('Erreur lecture vidéo:', e));
+        }
+        setRemoteStreams(prev => [...prev, remoteStream]);
+      });
+      
+      calls.push(hostCall);
+      
+      // Appeler tous les invités acceptés
+      guests.filter(g => g.status === 'accepted').forEach(guest => {
+        console.log(`Spectateur appelle l'invité ${guest.user_id}`);
+        const guestCall = peerInstance.call(guest.user_id, null);
+        
+        guestCall.on('stream', (remoteStream) => {
+          console.log(`Spectateur reçoit le stream de l'invité ${guest.user_id}`);
+          setRemoteStreams(prev => [...prev, remoteStream]);
+        });
+        
+        calls.push(guestCall);
+      });
+      
+      setActiveCalls(calls);
+    }
+  }, [isHost, isGuest, peerInstance, live, guests]);
+
+// MODIFICATION 5 : Ligne 230 - Ajouter isGuest dans la condition
+// AVANT:
+if (!isHost && currentUser && !peerInstance) {
+
+// APRÈS:
+if (!isHost && !isGuest && currentUser && !peerInstance) {
+
+// MODIFICATION 6 : Ligne 243 - Ajouter isGuest dans les dépendances
+// AVANT:
+}, [isHost, currentUser, peerInstance]);
+
+// APRÈS:
+}, [isHost, isGuest, currentUser, peerInstance]);

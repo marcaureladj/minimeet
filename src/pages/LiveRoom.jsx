@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../services/supabaseClient';
+import { initializePeer, getPeer, destroyPeer } from '../services/peerClient';
 import { getDisplayName } from '../services/userUtils';
 import {
   Radio, Eye, Send, Heart, ThumbsUp, Flame, Star, Sparkles,
@@ -50,6 +51,11 @@ const LiveRoomPage = () => {
   const [showInviteModal, setShowInviteModal] = useState(false);
   const [showViewersModal, setShowViewersModal] = useState(false);
   const [floatingReactions, setFloatingReactions] = useState([]);
+
+  // PeerJS for live streaming
+  const [peerInstance, setPeerInstance] = useState(null);
+  const [activeCalls, setActiveCalls] = useState([]);
+  const [remoteStreams, setRemoteStreams] = useState([]);
 
   const commentsEndRef = useRef(null);
   const videoRef = useRef(null);
@@ -171,6 +177,70 @@ const LiveRoomPage = () => {
       console.error('Media error:', e);
     }
   };
+
+  // Initialize PeerJS for host
+  useEffect(() => {
+    if ((isHost || isGuest) && currentUser && localStream) {
+      const peer = initializePeer(currentUser.id);
+      setPeerInstance(peer);
+
+      peer.on('call', (call) => {
+        // L'hôte répond avec son stream local
+        call.answer(localStream);
+        console.log(`${isHost ? 'Hôte' : 'Invité'} répond à l'appel d'un spectateur`);
+      });
+
+      peer.on('error', (err) => {
+        console.error('PeerJS error:', err);
+      });
+
+      return () => {
+        destroyPeer();
+        setPeerInstance(null);
+      };
+    }
+  }, [isHost, isGuest, currentUser, localStream]);
+
+  // For viewers: call the host to receive stream
+  useEffect(() => {
+    if (!isHost && !isGuest && peerInstance && live?.host_id) {
+      console.log(`Spectateur appelle l'hôte ${live.host_id}`);
+      const call = peerInstance.call(live.host_id, null); // Spectateur n'envoie pas de stream
+
+      call.on('stream', (remoteStream) => {
+        console.log('Spectateur reçoit le stream de l\'hôte');
+        // Afficher le stream de l'hôte
+        if (videoRef.current) {
+          videoRef.current.srcObject = remoteStream;
+          videoRef.current.play().catch(e => console.error('Erreur lecture vidéo:', e));
+        }
+        setRemoteStreams([remoteStream]);
+      });
+
+      call.on('error', (err) => {
+        console.error('Erreur lors de l\'appel:', err);
+      });
+
+      setActiveCalls([call]);
+    }
+  }, [isHost, peerInstance, live, isGuest]);
+
+  // Initialize PeerJS for viewers
+  useEffect(() => {
+    if (!isHost && !isGuest && currentUser && !peerInstance) {
+      const peer = initializePeer(currentUser.id);
+      setPeerInstance(peer);
+
+      peer.on('error', (err) => {
+        console.error('PeerJS error (viewer):', err);
+      });
+
+      return () => {
+        destroyPeer();
+        setPeerInstance(null);
+      };
+    }
+  }, [isHost, isGuest, currentUser, peerInstance]);
 
   // Realtime subscriptions
   useEffect(() => {
@@ -609,3 +679,5 @@ const LiveRoomPage = () => {
 };
 
 export default LiveRoomPage;
+
+
