@@ -64,6 +64,13 @@ const MeetRoomPage = () => {
   const [avatarUrl, setAvatarUrl] = useState(null);
   const [speakingPeers, setSpeakingPeers] = useState({ local: false });
 
+  // Notifications
+  const [notification, setNotification] = useState(null);
+  const showNotification = (message, type = 'info') => {
+    setNotification({ message, type });
+    setTimeout(() => setNotification(null), 4000);
+  };
+
   // Fetch room info
   useEffect(() => {
     const fetchRoomInfo = async () => {
@@ -349,12 +356,27 @@ const MeetRoomPage = () => {
         const { eventType, new: n, old: o } = payload;
         const peerId = n?.peer_id || o?.peer_id;
         if (peerId === peerInstance.id) return;
+        
         if (eventType === 'INSERT' && n?.status === 'online') {
           setRoomParticipantsData(prev => prev.find(p => p.peer_id === peerId) ? prev : [...prev, n]);
           initiateCallToPeer(peerId, n.user_email, n.user_full_name);
-        } else if (eventType === 'UPDATE' && n?.status === 'offline') {
-          setRoomParticipantsData(prev => prev.filter(p => p.peer_id !== peerId));
-          setRemoteStreams(prev => prev.filter(s => s.id !== peerId));
+        } else if (eventType === 'UPDATE') {
+          if (n?.status === 'offline') {
+            setRoomParticipantsData(prev => prev.filter(p => p.peer_id !== peerId));
+            setRemoteStreams(prev => prev.filter(s => s.id !== peerId));
+          } else {
+            // Mettre à jour les données du participant
+            setRoomParticipantsData(prev => prev.map(p => p.peer_id === peerId ? { ...p, ...n } : p));
+            
+            // Notification de partage d'écran
+            if (n?.is_screen_sharing !== o?.is_screen_sharing) {
+              if (n?.is_screen_sharing) {
+                showNotification(`🖥️ ${n.user_full_name || 'Un participant'} partage son écran`, 'info');
+              } else {
+                showNotification(`🖥️ ${n.user_full_name || 'Un participant'} a arrêté le partage`, 'info');
+              }
+            }
+          }
         } else if (eventType === 'DELETE') {
           setRoomParticipantsData(prev => prev.filter(p => p.peer_id !== peerId));
           setRemoteStreams(prev => prev.filter(s => s.id !== peerId));
@@ -370,9 +392,23 @@ const MeetRoomPage = () => {
     const sub = supabase.channel(`whiteboard-${roomId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'room_whiteboard', filter: `room_id=eq.${roomId}` }, (payload) => {
         if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
-          setIsWhiteboardActive(payload.new.is_active);
+          const wasActive = isWhiteboardActive;
+          const isNowActive = payload.new.is_active;
+          setIsWhiteboardActive(isNowActive);
           setWhiteboardInitiator(payload.new.initiator_id);
+          
+          // Notification si quelqu'un d'autre active/désactive le tableau blanc
+          if (payload.new.initiator_id !== currentUser?.id) {
+            if (isNowActive && !wasActive) {
+              showNotification('📝 Un participant a ouvert le tableau blanc', 'info');
+            } else if (!isNowActive && wasActive) {
+              showNotification('📝 Le tableau blanc a été fermé', 'info');
+            }
+          }
         } else if (payload.eventType === 'DELETE') {
+          if (isWhiteboardActive && whiteboardInitiator !== currentUser?.id) {
+            showNotification('📝 Le tableau blanc a été fermé', 'info');
+          }
           setIsWhiteboardActive(false);
           setWhiteboardInitiator(null);
         }
@@ -436,15 +472,32 @@ const MeetRoomPage = () => {
     if (isScreenSharing) {
       if (screenStreamRef.current) { screenStreamRef.current.getTracks().forEach(t => t.stop()); screenStreamRef.current = null; }
       setIsScreenSharing(false);
+      
+      // Notifier les autres que le partage d'écran est terminé
+      if (currentUser && roomId) {
+        await supabase.from('room_participants').update({ is_screen_sharing: false }).match({ room_id: roomId, user_id: currentUser.id });
+      }
+      
       if (cameraStreamRef.current) {
         setLocalStream(cameraStreamRef.current);
         setMainDisplayedStreamInfo(prev => ({ ...prev, stream: cameraStreamRef.current, fullName: prev.fullName.replace(' (Écran)', '') }));
 
-        // Remplacer les tracks vidéo dans toutes les connexions
+        // Remplacer les tracks vidéo dans toutes les connexions existantes
         Object.values(connectedPeers).forEach(call => {
-          const videoTrack = cameraStreamRef.current.getVideoTracks()[0];
-          const sender = call.peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
-          if (sender && videoTrack) sender.replaceTrack(videoTrack);
+          try {
+            // PeerJS expose peerConnection via call.peerConnection ou call._peerConnection
+            const pc = call.peerConnection || call._peerConnection;
+            if (pc && pc.getSenders) {
+              const videoTrack = cameraStreamRef.current.getVideoTracks()[0];
+              const senders = pc.getSenders();
+              const videoSender = senders.find(s => s.track && s.track.kind === 'video');
+              if (videoSender && videoTrack) {
+                videoSender.replaceTrack(videoTrack).catch(err => console.error('Erreur replaceTrack:', err));
+              }
+            }
+          } catch (err) {
+            console.error('Erreur lors du remplacement de track:', err);
+          }
         });
       }
     } else {
@@ -455,17 +508,36 @@ const MeetRoomPage = () => {
         setLocalStream(stream);
         setMainDisplayedStreamInfo(prev => ({ ...prev, stream, fullName: prev.fullName + ' (Écran)' }));
 
-        // Remplacer les tracks vidéo dans toutes les connexions
+        // Notifier les autres du partage d'écran
+        if (currentUser && roomId) {
+          await supabase.from('room_participants').update({ is_screen_sharing: true }).match({ room_id: roomId, user_id: currentUser.id });
+        }
+
+        // Remplacer les tracks vidéo/audio dans toutes les connexions existantes
         Object.values(connectedPeers).forEach(call => {
-          const videoTrack = stream.getVideoTracks()[0];
-          const audioTrack = stream.getAudioTracks()[0];
-          const senders = call.peerConnection.getSenders();
+          try {
+            const pc = call.peerConnection || call._peerConnection;
+            if (pc && pc.getSenders) {
+              const senders = pc.getSenders();
+              
+              const videoTrack = stream.getVideoTracks()[0];
+              const videoSender = senders.find(s => s.track && s.track.kind === 'video');
+              if (videoSender && videoTrack) {
+                videoSender.replaceTrack(videoTrack).catch(err => console.error('Erreur replaceTrack video:', err));
+              }
 
-          const videoSender = senders.find(s => s.track && s.track.kind === 'video');
-          if (videoSender && videoTrack) videoSender.replaceTrack(videoTrack);
-
-          const audioSender = senders.find(s => s.track && s.track.kind === 'audio');
-          if (audioSender && audioTrack) audioSender.replaceTrack(audioTrack);
+              // Remplacer l'audio du partage d'écran si disponible
+              const audioTrack = stream.getAudioTracks()[0];
+              if (audioTrack) {
+                const audioSender = senders.find(s => s.track && s.track.kind === 'audio');
+                if (audioSender) {
+                  audioSender.replaceTrack(audioTrack).catch(err => console.error('Erreur replaceTrack audio:', err));
+                }
+              }
+            }
+          } catch (err) {
+            console.error('Erreur lors du remplacement de track:', err);
+          }
         });
 
         stream.getVideoTracks()[0].onended = () => {
@@ -665,9 +737,25 @@ const MeetRoomPage = () => {
   const thumbnailStreams = allStreams.filter(s => s.id !== activeMainStream.id);
 
   return (
-    <div className="flex h-screen bg-gradient-to-br from-gray-100 to-gray-200">
-      <div className="flex-1 p-2 sm:p-5">
-        <div className="h-full bg-white rounded-3xl shadow-xl overflow-hidden flex flex-col">
+    <div className="flex h-screen bg-gradient-to-br from-gray-100 to-gray-200 overflow-hidden">
+      {/* Notification Toast - au niveau global */}
+      {notification && (
+        <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-[60] px-4 py-3 rounded-xl shadow-lg animate-fade-in flex items-center space-x-2 ${
+          notification.type === 'info' ? 'bg-blue-600 text-white' : 
+          notification.type === 'success' ? 'bg-green-600 text-white' : 
+          'bg-gray-800 text-white'
+        }`}>
+          <span className="text-sm font-medium">{notification.message}</span>
+          <button onClick={() => setNotification(null)} className="p-1 hover:bg-white/20 rounded">
+            <X size={14} />
+          </button>
+        </div>
+      )}
+
+      {/* Zone principale - prend tout l'espace disponible */}
+      <div className={`flex-1 p-2 sm:p-5 min-w-0 transition-all duration-300 ${showSidebar ? 'lg:pr-[320px]' : ''}`}>
+        <div className="h-full bg-white rounded-3xl shadow-xl overflow-hidden flex flex-col relative">
+
           {/* Header */}
           <div className="px-3 sm:px-6 pt-3 sm:pt-5 pb-3 sm:pb-4 flex justify-between items-center border-b border-gray-100">
             <div className="flex items-center gap-2 sm:gap-3 min-w-0">
@@ -839,14 +927,14 @@ const MeetRoomPage = () => {
           </div>
         </div>
 
-        {/* Sidebar - Modal sur mobile, sidebar sur desktop */}
+        {/* Sidebar - Modal sur mobile/tablette, sidebar fixe sur desktop */}
         {showSidebar && (
           <>
-            {/* Overlay mobile */}
+            {/* Overlay mobile/tablette */}
             <div className="fixed inset-0 bg-black/50 z-40 lg:hidden" onClick={() => setShowSidebar(false)} />
 
-            {/* Sidebar content */}
-            <div className="fixed lg:relative top-0 right-0 h-full w-full sm:w-96 lg:w-80 bg-white p-4 sm:p-6 flex flex-col shadow-xl z-50 transform transition-transform duration-300 lg:transform-none">
+            {/* Sidebar content - fixed sur tous les écrans, mais positionnée différemment */}
+            <div className="fixed top-0 right-0 h-full w-[85vw] max-w-[380px] sm:w-96 lg:w-80 bg-white p-4 sm:p-6 flex flex-col shadow-xl z-50 lg:z-30 transition-transform duration-300 lg:top-2 lg:right-2 lg:bottom-2 lg:h-auto lg:rounded-3xl">
               {/* Close button mobile */}
               <button onClick={() => setShowSidebar(false)} className="lg:hidden absolute top-4 right-4 p-2 hover:bg-gray-100 rounded-lg">
                 <X size={20} className="text-gray-600" />

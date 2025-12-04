@@ -1,7 +1,7 @@
-import React, { useRef, useState, useEffect } from 'react';
+import { useRef, useState, useEffect, useCallback } from 'react';
 import { supabase } from '../services/supabaseClient';
 import {
-  Pencil, Eraser, Square, Circle as CircleIcon, Minus, Type,
+  Pencil, Eraser, Square, Circle as CircleIcon, Minus,
   Trash2, Download, Undo, Redo, Palette, MousePointer
 } from 'lucide-react';
 
@@ -16,9 +16,39 @@ const Whiteboard = ({ roomId }) => {
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [startPos, setStartPos] = useState({ x: 0, y: 0 });
   const [showColorPicker, setShowColorPicker] = useState(false);
+  const syncTimeoutRef = useRef(null);
+  const isRemoteUpdateRef = useRef(false);
 
   const colors = ['#000000', '#EF4444', '#F59E0B', '#10B981', '#3B82F6', '#8B5CF6', '#EC4899', '#FFFFFF'];
   const sizes = [2, 4, 6, 10, 16];
+
+  // Synchroniser le canvas avec un debounce pour éviter trop de requêtes
+  const syncCanvas = useCallback(async () => {
+    if (!roomId || !canvasRef.current || isRemoteUpdateRef.current) return;
+    
+    const canvasData = canvasRef.current.toDataURL();
+    try {
+      await supabase
+        .from('room_whiteboard')
+        .upsert({
+          room_id: roomId,
+          canvas_data: canvasData,
+          updated_at: new Date().toISOString(),
+          is_active: true
+        }, { onConflict: 'room_id' });
+    } catch (e) {
+      console.error('Erreur sync canvas:', e);
+    }
+  }, [roomId]);
+
+  const debouncedSync = useCallback(() => {
+    if (syncTimeoutRef.current) {
+      clearTimeout(syncTimeoutRef.current);
+    }
+    syncTimeoutRef.current = setTimeout(() => {
+      syncCanvas();
+    }, 100); // Sync toutes les 100ms max pendant le dessin
+  }, [syncCanvas]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -48,7 +78,7 @@ const Whiteboard = ({ roomId }) => {
     }
   }, [color, lineWidth, tool]);
 
-  const saveState = async () => {
+  const saveState = async (broadcast = true) => {
     const canvas = canvasRef.current;
     const newHistory = history.slice(0, historyIndex + 1);
     const canvasData = canvas.toDataURL();
@@ -57,7 +87,7 @@ const Whiteboard = ({ roomId }) => {
     setHistoryIndex(newHistory.length - 1);
 
     // Sauvegarder dans Supabase pour synchronisation
-    if (roomId) {
+    if (roomId && broadcast) {
       try {
         await supabase
           .from('room_whiteboard')
@@ -89,13 +119,23 @@ const Whiteboard = ({ roomId }) => {
     }
   };
 
-  const loadState = (dataUrl) => {
+  const loadState = (dataUrl, fromRemote = false) => {
     const canvas = canvasRef.current;
     const context = contextRef.current;
     const img = new Image();
     img.onload = () => {
+      // Marquer comme mise à jour distante pour éviter de re-synchroniser
+      if (fromRemote) {
+        isRemoteUpdateRef.current = true;
+      }
       context.clearRect(0, 0, canvas.width, canvas.height);
       context.drawImage(img, 0, 0, canvas.offsetWidth, canvas.offsetHeight);
+      // Réinitialiser après un court délai
+      if (fromRemote) {
+        setTimeout(() => {
+          isRemoteUpdateRef.current = false;
+        }, 50);
+      }
     };
     img.src = dataUrl;
   };
@@ -131,6 +171,8 @@ const Whiteboard = ({ roomId }) => {
     if (tool === 'pencil' || tool === 'eraser') {
       contextRef.current.lineTo(x, y);
       contextRef.current.stroke();
+      // Synchroniser pendant le dessin
+      debouncedSync();
     }
   };
 
@@ -193,20 +235,26 @@ const Whiteboard = ({ roomId }) => {
 
     loadInitialCanvas();
 
+    // Écouter les changements INSERT et UPDATE
     const canvasSub = supabase
-      .channel(`whiteboard-canvas:${roomId}`)
+      .channel(`whiteboard-canvas-${roomId}`)
       .on('postgres_changes', {
-        event: 'UPDATE',
+        event: '*',
         schema: 'public',
         table: 'room_whiteboard',
         filter: `room_id=eq.${roomId}`
       }, (payload) => {
-        if (payload.new.canvas_data) {
-          // Charger les données du canvas depuis un autre utilisateur
-          loadState(payload.new.canvas_data);
+        if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
+          if (payload.new.canvas_data && !isRemoteUpdateRef.current) {
+            // Charger les données du canvas depuis un autre utilisateur
+            console.log('Whiteboard: Receiving remote update');
+            loadState(payload.new.canvas_data, true);
+          }
         }
       })
-      .subscribe();
+      .subscribe((status) => {
+        console.log('Whiteboard subscription status:', status);
+      });
 
     return () => { supabase.removeChannel(canvasSub); };
   }, [roomId]);
