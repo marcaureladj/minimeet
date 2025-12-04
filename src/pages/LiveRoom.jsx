@@ -10,6 +10,32 @@ import {
 } from 'lucide-react';
 import Avatar from '../components/Avatar';
 
+// Composant pour afficher une vidéo distante avec ref correcte
+const RemoteVideo = ({ stream, type }) => {
+  const videoRef = useRef(null);
+
+  useEffect(() => {
+    if (videoRef.current && stream) {
+      videoRef.current.srcObject = stream;
+      videoRef.current.play().catch(e => console.error('Erreur lecture vidéo:', e));
+    }
+  }, [stream]);
+
+  return (
+    <>
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+        className="w-full h-full object-contain"
+      />
+      <div className="absolute bottom-2 left-2 bg-black/50 px-2 py-1 rounded text-white text-xs">
+        {type === 'host' ? 'Hôte' : 'Invité'}
+      </div>
+    </>
+  );
+};
+
 const LiveRoomPage = () => {
   const { liveId } = useParams();
   const navigate = useNavigate();
@@ -179,7 +205,7 @@ const LiveRoomPage = () => {
   };
 
   // Créer un stream vide pour les spectateurs (nécessaire pour PeerJS)
-  const createEmptyStream = () => {
+  const createEmptyStream = async () => {
     const canvas = document.createElement('canvas');
     canvas.width = 1;
     canvas.height = 1;
@@ -188,16 +214,26 @@ const LiveRoomPage = () => {
     ctx.fillRect(0, 0, 1, 1);
     const videoTrack = canvas.captureStream(1).getVideoTracks()[0];
     
-    // Créer un audio context silencieux
-    const audioContext = new AudioContext();
-    const oscillator = audioContext.createOscillator();
-    const dst = audioContext.createMediaStreamDestination();
-    oscillator.connect(dst);
-    oscillator.start();
-    const audioTrack = dst.stream.getAudioTracks()[0];
-    audioTrack.enabled = false; // Mute
-    
-    return new MediaStream([videoTrack, audioTrack]);
+    try {
+      // Créer un audio context silencieux
+      const audioContext = new AudioContext();
+      // Résumer si suspendu (nécessite interaction utilisateur dans certains navigateurs)
+      if (audioContext.state === 'suspended') {
+        await audioContext.resume();
+      }
+      const oscillator = audioContext.createOscillator();
+      const dst = audioContext.createMediaStreamDestination();
+      oscillator.connect(dst);
+      oscillator.start();
+      const audioTrack = dst.stream.getAudioTracks()[0];
+      audioTrack.enabled = false; // Mute
+      
+      return new MediaStream([videoTrack, audioTrack]);
+    } catch (e) {
+      console.warn('Impossible de créer audio track, utilisation vidéo seule:', e);
+      // Fallback: retourner seulement la vidéo
+      return new MediaStream([videoTrack]);
+    }
   };
 
   // PeerJS pour hôte ET invités - ils diffusent leur stream
@@ -254,7 +290,7 @@ const LiveRoomPage = () => {
         console.log('Spectateur peer ouvert:', currentUser.id);
         
         // Créer un stream vide pour pouvoir appeler (PeerJS nécessite un stream)
-        const emptyStream = createEmptyStream();
+        const emptyStream = await createEmptyStream();
 
         // Appeler l'hôte
         if (live?.host_id) {
@@ -399,12 +435,51 @@ const LiveRoomPage = () => {
         console.log('Reactions subscription status:', status);
       });
 
+    // Subscription pour les invités qui rejoignent (pour que les spectateurs puissent les appeler)
+    const guestsSub = supabase.channel(`live-guests-${liveId}`)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'live_guests', filter: `live_id=eq.${liveId}` },
+        async (payload) => {
+          console.log('Guest status changed:', payload.new);
+          // Mettre à jour la liste des invités
+          if (payload.new.status === 'accepted' || payload.new.status === 'joined') {
+            const { data: profile } = await supabase.from('profiles').select('id, full_name, avatar_url').eq('id', payload.new.user_id).single();
+            setGuests(prev => {
+              const existing = prev.find(g => g.id === payload.new.id);
+              if (existing) {
+                return prev.map(g => g.id === payload.new.id ? { ...payload.new, profiles: profile } : g);
+              }
+              return [...prev, { ...payload.new, profiles: profile }];
+            });
+            
+            // Si on est spectateur et que le live est en cours, appeler le nouvel invité
+            if (!isHost && !isGuest && peerInstance && live?.status === 'live') {
+              console.log('Spectateur appelle le nouvel invité:', payload.new.user_id);
+              const emptyStream = await createEmptyStream();
+              const guestCall = peerInstance.call(payload.new.user_id, emptyStream);
+              if (guestCall) {
+                guestCall.on('stream', (remoteStream) => {
+                  console.log('Spectateur reçoit stream du nouvel invité:', payload.new.user_id);
+                  setRemoteStreams(prev => {
+                    const filtered = prev.filter(s => s.id !== payload.new.user_id);
+                    return [...filtered, { stream: remoteStream, id: payload.new.user_id, type: 'guest' }];
+                  });
+                });
+                guestCall.on('close', () => {
+                  setRemoteStreams(prev => prev.filter(s => s.id !== payload.new.user_id));
+                });
+              }
+            }
+          }
+        })
+      .subscribe();
+
     return () => {
       supabase.removeChannel(commentsSub);
       supabase.removeChannel(viewersSub);
       supabase.removeChannel(reactionsSub);
+      supabase.removeChannel(guestsSub);
     };
-  }, [liveId, currentUser]);
+  }, [liveId, currentUser, isHost, isGuest, peerInstance, live]);
 
   useEffect(() => {
     commentsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -485,6 +560,42 @@ const LiveRoomPage = () => {
     if (track) { track.enabled = !track.enabled; setIsCamOff(!track.enabled); }
   };
 
+  // Remplacer les tracks vidéo/audio dans toutes les connexions PeerJS actives
+  const replaceTracksInCalls = (newStream) => {
+    if (!peerInstance) return;
+    
+    // PeerJS stocke les connexions dans peer.connections
+    const connections = peerInstance.connections || {};
+    Object.values(connections).forEach(callArray => {
+      callArray.forEach(call => {
+        try {
+          const pc = call.peerConnection || call._peerConnection;
+          if (pc && pc.getSenders) {
+            const senders = pc.getSenders();
+            
+            // Remplacer la track vidéo
+            const videoTrack = newStream.getVideoTracks()[0];
+            const videoSender = senders.find(s => s.track && s.track.kind === 'video');
+            if (videoSender && videoTrack) {
+              videoSender.replaceTrack(videoTrack).catch(err => console.error('Erreur replaceTrack video:', err));
+            }
+            
+            // Remplacer la track audio si disponible
+            const audioTrack = newStream.getAudioTracks()[0];
+            if (audioTrack) {
+              const audioSender = senders.find(s => s.track && s.track.kind === 'audio');
+              if (audioSender) {
+                audioSender.replaceTrack(audioTrack).catch(err => console.error('Erreur replaceTrack audio:', err));
+              }
+            }
+          }
+        } catch (err) {
+          console.error('Erreur lors du remplacement de track:', err);
+        }
+      });
+    });
+  };
+
   const toggleScreenShare = async () => {
     if (isScreenSharing) {
       screenStreamRef.current?.getTracks().forEach(t => t.stop());
@@ -492,6 +603,8 @@ const LiveRoomPage = () => {
       if (cameraStreamRef.current) {
         setLocalStream(cameraStreamRef.current);
         if (videoRef.current) videoRef.current.srcObject = cameraStreamRef.current;
+        // Remplacer les tracks pour tous les spectateurs
+        replaceTracksInCalls(cameraStreamRef.current);
       }
     } else {
       try {
@@ -500,6 +613,8 @@ const LiveRoomPage = () => {
         setIsScreenSharing(true);
         setLocalStream(stream);
         if (videoRef.current) videoRef.current.srcObject = stream;
+        // Remplacer les tracks pour tous les spectateurs
+        replaceTracksInCalls(stream);
         stream.getVideoTracks()[0].onended = () => toggleScreenShare();
       } catch (e) { /* user cancelled */ }
     }
@@ -606,21 +721,9 @@ const LiveRoomPage = () => {
               gridTemplateColumns: remoteStreams.length === 1 ? '1fr' : 'repeat(2, 1fr)',
               gridTemplateRows: remoteStreams.length <= 2 ? '1fr' : 'repeat(2, 1fr)'
             }}>
-              {remoteStreams.map((rs, idx) => (
+              {remoteStreams.map((rs) => (
                 <div key={rs.id} className="relative w-full h-full bg-gray-900">
-                  <video
-                    ref={idx === 0 ? videoRef : null}
-                    autoPlay
-                    playsInline
-                    className="w-full h-full object-contain"
-                    onLoadedMetadata={(e) => {
-                      e.target.srcObject = rs.stream;
-                      e.target.play().catch(console.error);
-                    }}
-                  />
-                  <div className="absolute bottom-2 left-2 bg-black/50 px-2 py-1 rounded text-white text-xs">
-                    {rs.type === 'host' ? 'Hôte' : 'Invité'}
-                  </div>
+                  <RemoteVideo stream={rs.stream} type={rs.type} />
                 </div>
               ))}
             </div>
