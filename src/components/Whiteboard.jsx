@@ -24,11 +24,15 @@ const Whiteboard = ({ roomId }) => {
 
   // Synchroniser le canvas avec un debounce pour éviter trop de requêtes
   const syncCanvas = useCallback(async () => {
-    if (!roomId || !canvasRef.current || isRemoteUpdateRef.current) return;
+    if (!roomId || !canvasRef.current || isRemoteUpdateRef.current) {
+      if (import.meta.env.DEV) console.log('Whiteboard: Sync skipped - missing requirements');
+      return;
+    }
     
     const canvasData = canvasRef.current.toDataURL();
     try {
-      await supabase
+      if (import.meta.env.DEV) console.log('Whiteboard: Syncing canvas data to database');
+      const { error } = await supabase
         .from('room_whiteboard')
         .upsert({
           room_id: roomId,
@@ -36,8 +40,14 @@ const Whiteboard = ({ roomId }) => {
           updated_at: new Date().toISOString(),
           is_active: true
         }, { onConflict: 'room_id' });
+      
+      if (error) {
+        console.error('Whiteboard: Sync error:', error);
+      } else {
+        if (import.meta.env.DEV) console.log('Whiteboard: Canvas synced successfully');
+      }
     } catch (e) {
-      console.error('Erreur sync canvas:', e);
+      console.error('Whiteboard: Sync exception:', e);
     }
   }, [roomId]);
 
@@ -47,7 +57,7 @@ const Whiteboard = ({ roomId }) => {
     }
     syncTimeoutRef.current = setTimeout(() => {
       syncCanvas();
-    }, 100); // Sync toutes les 100ms max pendant le dessin
+    }, 500); // Sync toutes les 500ms max pendant le dessin (réduit la charge)
   }, [syncCanvas]);
 
   useEffect(() => {
@@ -79,6 +89,11 @@ const Whiteboard = ({ roomId }) => {
   }, [color, lineWidth, tool]);
 
   const saveState = async (broadcast = true) => {
+    if (!canvasRef.current) {
+      console.log('Whiteboard: Cannot save state - canvas not ready');
+      return;
+    }
+
     const canvas = canvasRef.current;
     const newHistory = history.slice(0, historyIndex + 1);
     const canvasData = canvas.toDataURL();
@@ -87,9 +102,10 @@ const Whiteboard = ({ roomId }) => {
     setHistoryIndex(newHistory.length - 1);
 
     // Sauvegarder dans Supabase pour synchronisation
-    if (roomId && broadcast) {
+    if (roomId && broadcast && !isRemoteUpdateRef.current) {
       try {
-        await supabase
+        console.log('Whiteboard: Saving state to database');
+        const { error } = await supabase
           .from('room_whiteboard')
           .upsert({
             room_id: roomId,
@@ -97,8 +113,14 @@ const Whiteboard = ({ roomId }) => {
             updated_at: new Date().toISOString(),
             is_active: true
           }, { onConflict: 'room_id' });
+        
+        if (error) {
+          console.error('Whiteboard: Save error:', error);
+        } else {
+          console.log('Whiteboard: State saved successfully');
+        }
       } catch (e) {
-        console.error('Erreur sauvegarde canvas:', e);
+        console.error('Whiteboard: Save exception:', e);
       }
     }
   };
@@ -120,23 +142,48 @@ const Whiteboard = ({ roomId }) => {
   };
 
   const loadState = (dataUrl, fromRemote = false) => {
+    if (!canvasRef.current || !contextRef.current) {
+      console.log('Whiteboard: Cannot load state - canvas not ready');
+      return;
+    }
+
     const canvas = canvasRef.current;
     const context = contextRef.current;
     const img = new Image();
+    
     img.onload = () => {
-      // Marquer comme mise à jour distante pour éviter de re-synchroniser
-      if (fromRemote) {
-        isRemoteUpdateRef.current = true;
-      }
-      context.clearRect(0, 0, canvas.width, canvas.height);
-      context.drawImage(img, 0, 0, canvas.offsetWidth, canvas.offsetHeight);
-      // Réinitialiser après un court délai
-      if (fromRemote) {
-        setTimeout(() => {
+      try {
+        // Marquer comme mise à jour distante pour éviter de re-synchroniser
+        if (fromRemote) {
+          console.log('Whiteboard: Loading remote canvas state');
+          isRemoteUpdateRef.current = true;
+        }
+        
+        context.clearRect(0, 0, canvas.width, canvas.height);
+        context.drawImage(img, 0, 0, canvas.offsetWidth, canvas.offsetHeight);
+        
+        // Réinitialiser après un court délai
+        if (fromRemote) {
+          setTimeout(() => {
+            isRemoteUpdateRef.current = false;
+            console.log('Whiteboard: Remote update flag cleared');
+          }, 100);
+        }
+      } catch (e) {
+        console.error('Whiteboard: Error loading canvas state:', e);
+        if (fromRemote) {
           isRemoteUpdateRef.current = false;
-        }, 50);
+        }
       }
     };
+    
+    img.onerror = (e) => {
+      console.error('Whiteboard: Error loading image:', e);
+      if (fromRemote) {
+        isRemoteUpdateRef.current = false;
+      }
+    };
+    
     img.src = dataUrl;
   };
 
@@ -220,43 +267,73 @@ const Whiteboard = ({ roomId }) => {
   useEffect(() => {
     if (!roomId) return;
 
+    let isInitialLoad = true;
+
     // Charger les données initiales du canvas
     const loadInitialCanvas = async () => {
-      const { data } = await supabase
-        .from('room_whiteboard')
-        .select('canvas_data')
-        .eq('room_id', roomId)
-        .single();
+      try {
+        console.log('Whiteboard: Loading initial canvas data for room:', roomId);
+        const { data, error } = await supabase
+          .from('room_whiteboard')
+          .select('canvas_data, updated_at')
+          .eq('room_id', roomId)
+          .eq('is_active', true)
+          .single();
 
-      if (data?.canvas_data) {
-        loadState(data.canvas_data);
+        if (error && error.code !== 'PGRST116') { // PGRST116 = no rows found
+          console.error('Whiteboard: Error loading initial canvas:', error);
+          return;
+        }
+
+        if (data?.canvas_data) {
+          console.log('Whiteboard: Loading initial canvas data');
+          loadState(data.canvas_data, true);
+        } else {
+          console.log('Whiteboard: No initial canvas data found');
+        }
+      } catch (e) {
+        console.error('Whiteboard: Exception loading initial canvas:', e);
+      } finally {
+        isInitialLoad = false;
       }
     };
 
     loadInitialCanvas();
 
-    // Écouter les changements INSERT et UPDATE
+    // Écouter les changements INSERT et UPDATE avec un canal unique
+    const channelName = `whiteboard-${roomId}-${Math.random().toString(36).substr(2, 9)}`;
+    console.log('Whiteboard: Creating subscription channel:', channelName);
+    
     const canvasSub = supabase
-      .channel(`whiteboard-canvas-${roomId}`)
+      .channel(channelName)
       .on('postgres_changes', {
         event: '*',
         schema: 'public',
         table: 'room_whiteboard',
         filter: `room_id=eq.${roomId}`
       }, (payload) => {
+        console.log('Whiteboard: Received payload:', payload.eventType, payload);
+        
         if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
-          if (payload.new.canvas_data && !isRemoteUpdateRef.current) {
-            // Charger les données du canvas depuis un autre utilisateur
-            console.log('Whiteboard: Receiving remote update');
+          if (payload.new?.canvas_data && !isRemoteUpdateRef.current && !isInitialLoad) {
+            console.log('Whiteboard: Applying remote canvas update');
             loadState(payload.new.canvas_data, true);
           }
         }
       })
-      .subscribe((status) => {
-        console.log('Whiteboard subscription status:', status);
+      .subscribe((status, err) => {
+        console.log('Whiteboard subscription status:', status, err);
+        if (status === 'SUBSCRIBED') {
+          console.log('Whiteboard: Successfully subscribed to real-time updates');
+        } else if (status === 'CHANNEL_ERROR') {
+          console.error('Whiteboard: Channel subscription error:', err);
+        }
       });
 
-    return () => { supabase.removeChannel(canvasSub); };
+    return () => { 
+      console.log('Whiteboard: Cleaning up subscription');
+      supabase.removeChannel(canvasSub); 
+    };
   }, [roomId]);
 
   const tools = [

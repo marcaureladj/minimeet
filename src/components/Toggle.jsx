@@ -1,4 +1,3 @@
-import React from 'react';
 
 const Toggle = ({ checked, onChange, label, icon }) => (
   <div className="flex items-center justify-between">

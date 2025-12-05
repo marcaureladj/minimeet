@@ -199,8 +199,20 @@ const LiveRoomPage = () => {
       cameraStreamRef.current = stream;
       setLocalStream(stream);
       if (videoRef.current) videoRef.current.srcObject = stream;
+      
+      // Si invité, marquer comme 'joined'
+      if (isGuest && currentUser?.id && liveId) {
+        await supabase.from('live_guests')
+          .update({ 
+            status: 'joined', 
+            joined_at: new Date().toISOString() 
+          })
+          .match({ live_id: liveId, user_id: currentUser.id });
+        console.log('[Live] Invité marqué comme joined');
+      }
     } catch (e) {
       console.error('Media error:', e);
+      alert('Impossible d\'accéder à la caméra/micro. Vérifiez les permissions.');
     }
   };
 
@@ -239,21 +251,36 @@ const LiveRoomPage = () => {
   // PeerJS pour hôte ET invités - ils diffusent leur stream
   useEffect(() => {
     if ((isHost || isGuest) && currentUser && localStream) {
+      console.log(`[Live PeerJS] Initialisation peer pour ${isHost ? 'hôte' : 'invité'}:`, currentUser.id);
       const peer = initializePeer(currentUser.id);
+      
+      if (!peer) {
+        console.error('[Live PeerJS] Échec initialisation peer');
+        return;
+      }
+      
       setPeerInstance(peer);
 
-      peer.on('open', () => {
-        console.log(`${isHost ? 'Hôte' : 'Invité'} peer ouvert:`, currentUser.id);
+      peer.on('open', (id) => {
+        console.log(`[Live PeerJS] ${isHost ? 'Hôte' : 'Invité'} peer ouvert:`, id);
+        console.log(`[Live PeerJS] Prêt à recevoir des appels avec stream:`, localStream.id);
       });
 
       peer.on('call', (call) => {
         // Répondre aux spectateurs ET aux autres participants avec notre stream
-        console.log(`${isHost ? 'Hôte' : 'Invité'} répond à l'appel de:`, call.peer);
-        call.answer(localStream);
+        console.log(`[Live PeerJS] ${isHost ? 'Hôte' : 'Invité'} reçoit appel de:`, call.peer);
+        console.log(`[Live PeerJS] Réponse avec stream:`, localStream.id);
+        
+        try {
+          call.answer(localStream);
+          console.log(`[Live PeerJS] Réponse envoyée à:`, call.peer);
+        } catch (err) {
+          console.error(`[Live PeerJS] Erreur lors de la réponse:`, err);
+        }
 
         // Écouter le stream de l'appelant (pour les invités qui reçoivent le stream de l'hôte)
         call.on('stream', (remoteStream) => {
-          console.log(`${isHost ? 'Hôte' : 'Invité'} reçoit stream de:`, call.peer);
+          console.log(`[Live PeerJS] ${isHost ? 'Hôte' : 'Invité'} reçoit stream de:`, call.peer);
           setRemoteStreams(prev => {
             if (!prev.find(s => s.id === call.peer)) {
               return [...prev, { stream: remoteStream, id: call.peer }];
@@ -263,16 +290,30 @@ const LiveRoomPage = () => {
         });
 
         call.on('close', () => {
-          console.log('Appel fermé avec:', call.peer);
+          console.log('[Live PeerJS] Appel fermé avec:', call.peer);
           setRemoteStreams(prev => prev.filter(s => s.id !== call.peer));
+        });
+        
+        call.on('error', (err) => {
+          console.error('[Live PeerJS] Erreur sur l\'appel avec', call.peer, ':', err);
         });
       });
 
       peer.on('error', (err) => {
-        console.error('PeerJS error (host/guest):', err);
+        console.error('[Live PeerJS] Erreur peer (host/guest):', err);
+      });
+      
+      peer.on('disconnected', () => {
+        console.warn('[Live PeerJS] Peer déconnecté, tentative de reconnexion...');
+        try {
+          peer.reconnect();
+        } catch (err) {
+          console.error('[Live PeerJS] Erreur reconnexion:', err);
+        }
       });
 
       return () => {
+        console.log('[Live PeerJS] Nettoyage peer', isHost ? 'hôte' : 'invité');
         destroyPeer();
         setPeerInstance(null);
       };
@@ -283,27 +324,52 @@ const LiveRoomPage = () => {
   useEffect(() => {
     // Les spectateurs ne se connectent que si le live est en cours
     if (!isHost && !isGuest && currentUser && live && live.status === 'live' && !peerInstance) {
+      console.log('[Live PeerJS] Initialisation peer spectateur:', currentUser.id);
       const peer = initializePeer(currentUser.id);
+      
+      if (!peer) {
+        console.error('[Live PeerJS] Échec initialisation peer spectateur');
+        return;
+      }
+      
       setPeerInstance(peer);
 
-      peer.on('open', async () => {
-        console.log('Spectateur peer ouvert:', currentUser.id);
+      peer.on('open', async (id) => {
+        console.log('[Live PeerJS] Spectateur peer ouvert:', id);
         
         // Créer un stream vide pour pouvoir appeler (PeerJS nécessite un stream)
         const emptyStream = await createEmptyStream();
+        console.log('[Live PeerJS] Stream vide créé pour spectateur');
+
+        // Attendre un peu pour s'assurer que l'hôte est prêt
+        await new Promise(resolve => setTimeout(resolve, 1000));
 
         // Appeler l'hôte
         if (live?.host_id) {
-          console.log(`Spectateur appelle l'hôte: ${live.host_id}`);
-          const hostCall = peer.call(live.host_id, emptyStream);
+          console.log(`[Live PeerJS] Spectateur appelle l'hôte: ${live.host_id}`);
+          
+          try {
+            const hostCall = peer.call(live.host_id, emptyStream);
 
-          if (hostCall) {
+            if (!hostCall) {
+              console.error('[Live PeerJS] Échec de l\'appel à l\'hôte');
+              return;
+            }
+
+            console.log('[Live PeerJS] Appel créé, en attente du stream...');
+
             hostCall.on('stream', (remoteStream) => {
-              console.log('Spectateur reçoit stream hôte');
+              console.log('[Live PeerJS] ✅ Spectateur reçoit stream hôte!', remoteStream.id);
+              console.log('[Live PeerJS] Video tracks:', remoteStream.getVideoTracks().length);
+              console.log('[Live PeerJS] Audio tracks:', remoteStream.getAudioTracks().length);
+              
               if (videoRef.current) {
                 videoRef.current.srcObject = remoteStream;
-                videoRef.current.play().catch(e => console.error('Erreur lecture:', e));
+                videoRef.current.play()
+                  .then(() => console.log('[Live PeerJS] Lecture vidéo démarrée'))
+                  .catch(e => console.error('[Live PeerJS] Erreur lecture:', e));
               }
+              
               setRemoteStreams(prev => {
                 const filtered = prev.filter(s => s.id !== live.host_id);
                 return [...filtered, { stream: remoteStream, id: live.host_id, type: 'host' }];
@@ -311,55 +377,89 @@ const LiveRoomPage = () => {
             });
 
             hostCall.on('error', (err) => {
-              console.error('Erreur appel hôte:', err);
+              console.error('[Live PeerJS] ❌ Erreur appel hôte:', err);
             });
 
             hostCall.on('close', () => {
-              console.log('Appel avec hôte fermé');
+              console.log('[Live PeerJS] Appel avec hôte fermé');
               setRemoteStreams(prev => prev.filter(s => s.id !== live.host_id));
             });
 
             setActiveCalls(prev => [...prev, hostCall]);
+          } catch (err) {
+            console.error('[Live PeerJS] Exception lors de l\'appel:', err);
           }
+        } else {
+          console.error('[Live PeerJS] ID hôte non disponible');
         }
 
         // Appeler tous les invités acceptés
         if (guests && guests.length > 0) {
-          guests.forEach(guest => {
-            if (guest.status === 'accepted') {
-              console.log(`Spectateur appelle l'invité: ${guest.user_id}`);
+          const acceptedGuests = guests.filter(g => g.status === 'accepted' || g.status === 'joined');
+          console.log(`[Live PeerJS] Nombre d'invités à appeler: ${acceptedGuests.length}`);
+          
+          acceptedGuests.forEach(guest => {
+            console.log(`[Live PeerJS] Spectateur appelle l'invité: ${guest.user_id}`);
+            
+            try {
               const guestCall = peer.call(guest.user_id, emptyStream);
 
-              if (guestCall) {
-                guestCall.on('stream', (remoteStream) => {
-                  console.log('Spectateur reçoit stream invité:', guest.user_id);
-                  setRemoteStreams(prev => {
-                    const filtered = prev.filter(s => s.id !== guest.user_id);
-                    return [...filtered, { stream: remoteStream, id: guest.user_id, type: 'guest' }];
-                  });
-                });
-
-                guestCall.on('error', (err) => {
-                  console.error('Erreur appel invité:', err);
-                });
-
-                guestCall.on('close', () => {
-                  console.log('Appel avec invité fermé:', guest.user_id);
-                  setRemoteStreams(prev => prev.filter(s => s.id !== guest.user_id));
-                });
-
-                setActiveCalls(prev => [...prev, guestCall]);
+              if (!guestCall) {
+                console.error(`[Live PeerJS] Échec de l'appel à l'invité ${guest.user_id}`);
+                return;
               }
+
+              guestCall.on('stream', (remoteStream) => {
+                console.log('[Live PeerJS] ✅ Spectateur reçoit stream invité:', guest.user_id);
+                setRemoteStreams(prev => {
+                  const filtered = prev.filter(s => s.id !== guest.user_id);
+                  return [...filtered, { stream: remoteStream, id: guest.user_id, type: 'guest' }];
+                });
+              });
+
+              guestCall.on('error', (err) => {
+                console.error('[Live PeerJS] ❌ Erreur appel invité:', err);
+              });
+
+              guestCall.on('close', () => {
+                console.log('[Live PeerJS] Appel avec invité fermé:', guest.user_id);
+                setRemoteStreams(prev => prev.filter(s => s.id !== guest.user_id));
+              });
+
+              setActiveCalls(prev => [...prev, guestCall]);
+            } catch (err) {
+              console.error('[Live PeerJS] Exception appel invité:', err);
             }
           });
         }
       });
 
       peer.on('error', (err) => {
-        console.error('PeerJS error (viewer):', err);
+        console.error('[Live PeerJS] Erreur peer (viewer):', err);
+        // Tenter de se reconnecter en cas d'erreur
+        if (err.type === 'peer-unavailable') {
+          console.log('[Live PeerJS] Peer non disponible, réessai dans 2s...');
+          setTimeout(() => {
+            if (peer && !peer.destroyed) {
+              peer.reconnect();
+            }
+          }, 2000);
+        }
+      });
+      
+      peer.on('disconnected', () => {
+        console.warn('[Live PeerJS] Peer spectateur déconnecté');
       });
 
       return () => {
+        console.log('[Live PeerJS] Nettoyage peer spectateur');
+        activeCalls.forEach(call => {
+          try {
+            call.close();
+          } catch (e) {
+            console.error('[Live PeerJS] Erreur fermeture appel:', e);
+          }
+        });
         destroyPeer();
         setPeerInstance(null);
       };
@@ -395,6 +495,7 @@ const LiveRoomPage = () => {
     const commentsSub = supabase.channel(`live-comments-${liveId}`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'live_comments', filter: `live_id=eq.${liveId}` },
         async (payload) => {
+          if (import.meta.env.DEV) console.log('[Live] New comment received:', payload.new);
           // Ne pas ajouter si c'est notre propre commentaire (déjà ajouté en optimistic)
           if (payload.new.user_id === currentUser?.id) {
             // Remplacer le commentaire temporaire par le vrai
@@ -408,22 +509,24 @@ const LiveRoomPage = () => {
           // Commentaire d'un autre utilisateur
           const { data: profile } = await supabase.from('profiles').select('full_name').eq('id', payload.new.user_id).single();
           setComments(prev => [...prev, { ...payload.new, profiles: profile }]);
-        }).subscribe();
+        }).subscribe((status) => {
+          if (import.meta.env.DEV) console.log('[Live] Comments subscription status:', status);
+        });
 
     const viewersSub = supabase.channel(`live-viewers-${liveId}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'live_viewers', filter: `live_id=eq.${liveId}` },
-        () => {
-          console.log('Viewers changed, fetching...');
+        (payload) => {
+          if (import.meta.env.DEV) console.log('[Live] Viewers changed:', payload.eventType);
           fetchViewers();
         })
       .subscribe((status) => {
-        console.log('Viewers subscription status:', status);
+        if (import.meta.env.DEV) console.log('[Live] Viewers subscription status:', status);
       });
 
     const reactionsSub = supabase.channel(`live-reactions-${liveId}`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'live_reactions', filter: `live_id=eq.${liveId}` },
         (payload) => {
-          console.log('New reaction received:', payload.new.reaction_type);
+          if (import.meta.env.DEV) console.log('[Live] New reaction received:', payload.new.reaction_type);
           showFloatingReaction(payload.new.reaction_type);
           // Mettre à jour le compteur
           setReactionCounts(prev => ({
@@ -432,7 +535,7 @@ const LiveRoomPage = () => {
           }));
         })
       .subscribe((status) => {
-        console.log('Reactions subscription status:', status);
+        if (import.meta.env.DEV) console.log('[Live] Reactions subscription status:', status);
       });
 
     // Subscription pour les invités qui rejoignent (pour que les spectateurs puissent les appeler)
@@ -480,6 +583,42 @@ const LiveRoomPage = () => {
       supabase.removeChannel(guestsSub);
     };
   }, [liveId, currentUser, isHost, isGuest, peerInstance, live]);
+
+  // Heartbeat pour spectateurs + cleanup au départ
+  useEffect(() => {
+    if (!currentUser?.id || !liveId || isHost || isGuest) return;
+    
+    // Heartbeat toutes les 10 secondes
+    const heartbeat = setInterval(async () => {
+      try {
+        await supabase.from('live_viewers')
+          .update({ last_active: new Date().toISOString() })
+          .match({ live_id: liveId, user_id: currentUser.id });
+      } catch (error) {
+        console.error('[Live] Heartbeat error:', error);
+      }
+    }, 10000);
+    
+    // Cleanup au départ
+    const cleanup = async () => {
+      try {
+        await supabase.from('live_viewers')
+          .update({ left_at: new Date().toISOString() })
+          .match({ live_id: liveId, user_id: currentUser.id });
+        console.log('[Live] Viewer left updated');
+      } catch (error) {
+        console.error('[Live] Cleanup error:', error);
+      }
+    };
+    
+    window.addEventListener('beforeunload', cleanup);
+    
+    return () => {
+      clearInterval(heartbeat);
+      window.removeEventListener('beforeunload', cleanup);
+      cleanup();
+    };
+  }, [currentUser, liveId, isHost, isGuest]);
 
   useEffect(() => {
     commentsEndRef.current?.scrollIntoView({ behavior: 'smooth' });

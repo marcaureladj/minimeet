@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Home, Video, Clock, Radio, Settings, LogOut, X } from 'lucide-react';
 import { supabase } from '../services/supabaseClient';

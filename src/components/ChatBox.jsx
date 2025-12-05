@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { Send, Flag, X } from 'lucide-react';
 import { getDisplayName } from '../services/userUtils';

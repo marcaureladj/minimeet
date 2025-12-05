@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../services/supabaseClient';
 import { Plus, Trash2, CheckCircle, Circle } from 'lucide-react';
 
@@ -75,8 +75,17 @@ const SharedTodoList = ({ roomId, currentUser }) => {
   const handleAddTodo = async (e) => {
     e.preventDefault();
     if (!newTodoContent.trim() || !currentUser || !roomId) return;
+    
     const content = newTodoContent.trim();
+    
+    // Validation 280 caractères
+    if (content.length > 280) {
+      setError('La tâche ne peut pas dépasser 280 caractères.');
+      return;
+    }
+    
     setNewTodoContent('');
+    setError(null);
 
     try {
       const { error: insertError } = await supabase.from('todos').insert({
@@ -181,21 +190,29 @@ const SharedTodoList = ({ roomId, currentUser }) => {
       </div>
 
       {/* Input */}
-      <form onSubmit={handleAddTodo} className="mt-4 flex items-center gap-2">
-        <input
-          type="text"
-          value={newTodoContent}
-          onChange={(e) => setNewTodoContent(e.target.value)}
-          placeholder="Nouvelle tâche..."
-          className="flex-1 px-4 py-3 border border-gray-200 rounded-xl bg-gray-50 text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
-        />
-        <button
-          type="submit"
-          disabled={!newTodoContent.trim()}
-          className="p-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-        >
-          <Plus size={18} />
-        </button>
+      <form onSubmit={handleAddTodo} className="mt-4">
+        <div className="flex items-center gap-2">
+          <input
+            type="text"
+            value={newTodoContent}
+            onChange={(e) => setNewTodoContent(e.target.value)}
+            maxLength={280}
+            placeholder="Nouvelle tâche..."
+            className="flex-1 px-4 py-3 border border-gray-200 rounded-xl bg-gray-50 text-gray-900 placeholder-gray-400 focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm"
+          />
+          <button
+            type="submit"
+            disabled={!newTodoContent.trim()}
+            className="p-3 bg-blue-600 text-white rounded-xl hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            <Plus size={18} />
+          </button>
+        </div>
+        {newTodoContent.length > 250 && (
+          <p className="text-xs text-gray-500 mt-1 ml-1">
+            {newTodoContent.length}/280 caractères
+          </p>
+        )}
       </form>
     </div>
   );

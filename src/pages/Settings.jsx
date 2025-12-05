@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../services/supabaseClient';
 import { User, Mail, Lock, Camera, Save, Loader2, Check, ArrowLeft, Menu } from 'lucide-react';
@@ -279,7 +279,7 @@ const SettingsPage = () => {
                       <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400">@</span>
                       <input
                         type="text"
-                        value={profile.username}
+                        value={profile.username || ''}
                         onChange={(e) => setProfile({ ...profile, username: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '') })}
                         className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-xl bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                         placeholder="username"

@@ -1,4 +1,3 @@
-import React from 'react';
 import { Link } from 'react-router-dom';
 import { Video, MessageCircle, Monitor, Shield, Users, Zap, ArrowRight, CheckCircle } from 'lucide-react';
 

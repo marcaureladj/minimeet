@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../services/supabaseClient';
 import { generateMeetingSummary } from '../services/openRouterClient';
@@ -42,32 +42,61 @@ const HistoryPage = () => {
     setIsLoading(true);
     try {
       // Get meetings created by user
-      const { data: userMeetings } = await supabase
+      const { data: userMeetings, error: meetingsError } = await supabase
         .from('meetings')
         .select('*')
         .eq('user_id', userId)
         .order('created_at', { ascending: false });
 
-      // Get participant logs for each meeting
-      const meetingsWithDetails = await Promise.all((userMeetings || []).map(async (meeting) => {
-        const { data: participants } = await supabase
-          .from('meeting_participants_log')
-          .select('*')
-          .eq('room_id', meeting.room_id)
-          .order('joined_at', { ascending: true });
+      if (meetingsError) throw meetingsError;
+      if (!userMeetings || userMeetings.length === 0) {
+        setMeetings([]);
+        return;
+      }
 
-        const { data: transcripts } = await supabase
-          .from('meeting_transcripts')
-          .select('*')
-          .eq('room_id', meeting.room_id);
+      const roomIds = userMeetings.map(m => m.room_id);
 
-        const { data: summary } = await supabase
-          .from('meeting_summaries')
+      // Charger TOUTES les données en parallèle (3 queries au lieu de N*3)
+      const [participantsData, transcriptsData, summariesData] = await Promise.all([
+        supabase.from('meeting_participants_log')
           .select('*')
-          .eq('room_id', meeting.room_id)
-          .single();
+          .in('room_id', roomIds)
+          .order('joined_at', { ascending: true }),
+        
+        supabase.from('meeting_transcripts')
+          .select('*')
+          .in('room_id', roomIds),
+        
+        supabase.from('meeting_summaries')
+          .select('*')
+          .in('room_id', roomIds)
+      ]);
 
-        return { ...meeting, participants: participants || [], transcripts: transcripts || [], summary };
+      // Regrouper par room_id
+      const participantsByRoom = {};
+      const transcriptsByRoom = {};
+      const summariesByRoom = {};
+
+      participantsData.data?.forEach(p => {
+        if (!participantsByRoom[p.room_id]) participantsByRoom[p.room_id] = [];
+        participantsByRoom[p.room_id].push(p);
+      });
+
+      transcriptsData.data?.forEach(t => {
+        if (!transcriptsByRoom[t.room_id]) transcriptsByRoom[t.room_id] = [];
+        transcriptsByRoom[t.room_id].push(t);
+      });
+
+      summariesData.data?.forEach(s => {
+        summariesByRoom[s.room_id] = s;
+      });
+
+      // Construire le résultat final
+      const meetingsWithDetails = userMeetings.map(meeting => ({
+        ...meeting,
+        participants: participantsByRoom[meeting.room_id] || [],
+        transcripts: transcriptsByRoom[meeting.room_id] || [],
+        summary: summariesByRoom[meeting.room_id]
       }));
 
       setMeetings(meetingsWithDetails);

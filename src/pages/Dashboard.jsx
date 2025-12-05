@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../services/supabaseClient';
 import { v4 as uuidv4 } from 'uuid';
@@ -144,18 +144,44 @@ const DashboardPage = () => {
     }
 
     setIsCreatingRoom(true);
-    const generatedRoomId = uuidv4().substring(0, 12);
+    
     try {
-      await supabase.from('meetings').insert([{
-        room_id: generatedRoomId,
-        user_id: currentUser.id,
-        name: meetingName.trim()
-      }]);
+      let generatedRoomId;
+      let attempts = 0;
+      let success = false;
+      
+      // Retry jusqu'à 5 fois en cas de collision
+      while (!success && attempts < 5) {
+        generatedRoomId = uuidv4().substring(0, 12);
+        
+        const { data, error } = await supabase.from('meetings').insert([{
+          room_id: generatedRoomId,
+          user_id: currentUser.id,
+          name: meetingName.trim()
+        }]).select();
+        
+        if (!error) {
+          success = true;
+        } else if (error.code === '23505') {
+          // Collision de clé unique, retry
+          attempts++;
+          console.log(`Collision room_id, tentative ${attempts}/5`);
+        } else {
+          // Autre erreur, throw
+          throw error;
+        }
+      }
+      
+      if (!success) {
+        throw new Error('Impossible de générer un ID unique après 5 tentatives');
+      }
+      
       setShowMeetingNameModal(false);
       setMeetingName('');
       navigate(`/meet/${generatedRoomId}`);
     } catch (error) {
-      alert('Erreur: ' + error.message);
+      alert('Erreur lors de la création de la réunion : ' + error.message);
+      console.error('Error creating room:', error);
     } finally {
       setIsCreatingRoom(false);
     }

@@ -279,14 +279,39 @@ const MeetRoomPage = () => {
 
   // Peer calls
   const initiateCallToPeer = (remotePeerId, remoteEmail, remoteFullName) => {
-    if (!localStream || !peerInstance || connectedPeers[remotePeerId]) return;
+    if (!localStream || !peerInstance || connectedPeers[remotePeerId]) {
+      console.log(`Impossible d'appeler ${remotePeerId}: stream=${!!localStream}, peer=${!!peerInstance}, déjà connecté=${!!connectedPeers[remotePeerId]}`);
+      return;
+    }
+    console.log(`Initiation d'appel vers ${remotePeerId} avec stream:`, localStream.id);
     const call = callPeer(remotePeerId, localStream);
-    if (!call) return;
+    if (!call) {
+      console.error(`Échec de l'appel vers ${remotePeerId}`);
+      return;
+    }
+    
     call.on('stream', (remoteStream) => {
-      setRemoteStreams(prev => prev.find(s => s.id === remotePeerId) ? prev : [...prev, { stream: remoteStream, id: remotePeerId, email: remoteEmail, fullName: remoteFullName }]);
+      console.log(`Stream reçu de ${remotePeerId}:`, remoteStream.id);
+      setRemoteStreams(prev => {
+        const existing = prev.find(s => s.id === remotePeerId);
+        if (existing) {
+          console.log(`Mise à jour du stream existant pour ${remotePeerId}`);
+          return prev.map(s => s.id === remotePeerId ? { ...s, stream: remoteStream } : s);
+        }
+        return [...prev, { stream: remoteStream, id: remotePeerId, email: remoteEmail, fullName: remoteFullName }];
+      });
       setConnectedPeers(prev => ({ ...prev, [remotePeerId]: call }));
     });
+    
     call.on('close', () => {
+      console.log(`Appel fermé avec ${remotePeerId}`);
+      setRemoteStreams(prev => prev.filter(s => s.id !== remotePeerId));
+      setConnectedPeers(prev => { const n = { ...prev }; delete n[remotePeerId]; return n; });
+    });
+    
+    call.on('error', (err) => {
+      console.error(`Erreur d'appel avec ${remotePeerId}:`, err);
+      // Nettoyer en cas d'erreur
       setRemoteStreams(prev => prev.filter(s => s.id !== remotePeerId));
       setConnectedPeers(prev => { const n = { ...prev }; delete n[remotePeerId]; return n; });
     });
@@ -295,16 +320,29 @@ const MeetRoomPage = () => {
   useEffect(() => {
     if (!peerInstance || !localStream) return;
     const handleIncomingCall = (call) => {
+      console.log(`Appel entrant de ${call.peer}, réponse avec stream:`, localStream.id);
       call.answer(localStream);
       call.on('stream', (remoteStream) => {
         const remotePeerId = call.peer;
-        setRemoteStreams(prev => prev.find(s => s.id === remotePeerId) ? prev : [...prev, { stream: remoteStream, id: remotePeerId, email: '', fullName: 'Participant' }]);
+        console.log(`Stream reçu de ${remotePeerId}:`, remoteStream.id);
+        setRemoteStreams(prev => {
+          const existing = prev.find(s => s.id === remotePeerId);
+          if (existing) {
+            console.log(`Stream déjà existant pour ${remotePeerId}, mise à jour`);
+            return prev.map(s => s.id === remotePeerId ? { ...s, stream: remoteStream } : s);
+          }
+          return [...prev, { stream: remoteStream, id: remotePeerId, email: '', fullName: 'Participant' }];
+        });
         setConnectedPeers(prev => ({ ...prev, [remotePeerId]: call }));
       });
       call.on('close', () => {
         const remotePeerId = call.peer;
+        console.log(`Appel fermé avec ${remotePeerId}`);
         setRemoteStreams(prev => prev.filter(s => s.id !== remotePeerId));
         setConnectedPeers(prev => { const n = { ...prev }; delete n[remotePeerId]; return n; });
+      });
+      call.on('error', (err) => {
+        console.error(`Erreur d'appel avec ${call.peer}:`, err);
       });
     };
     peerInstance.on('call', handleIncomingCall);
@@ -348,6 +386,23 @@ const MeetRoomPage = () => {
     return () => { isMounted = false; };
   }, [currentUser, roomId, peerInstance?.id, localStream]);
 
+  // Heartbeat pour éviter les participants zombies
+  useEffect(() => {
+    if (!currentUser?.id || !roomId || !peerInstance?.id) return;
+    
+    const heartbeat = setInterval(async () => {
+      try {
+        await supabase.from('room_participants')
+          .update({ last_seen: new Date().toISOString() })
+          .match({ room_id: roomId, user_id: currentUser.id });
+      } catch (error) {
+        console.error('Heartbeat error:', error);
+      }
+    }, 10000); // Toutes les 10 secondes
+    
+    return () => clearInterval(heartbeat);
+  }, [currentUser, roomId, peerInstance]);
+
   // Realtime participants
   useEffect(() => {
     if (!roomId || !currentUser?.id || !peerInstance?.id || !localStream) return;
@@ -388,17 +443,56 @@ const MeetRoomPage = () => {
 
   // Whiteboard realtime sync
   useEffect(() => {
-    if (!roomId) return;
-    const sub = supabase.channel(`whiteboard-${roomId}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'room_whiteboard', filter: `room_id=eq.${roomId}` }, (payload) => {
+    if (!roomId || !currentUser?.id) return;
+    
+    // Charger l'état initial du tableau blanc
+    const loadInitialWhiteboardState = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('room_whiteboard')
+          .select('is_active, initiator_id')
+          .eq('room_id', roomId)
+          .single();
+        
+        if (error && error.code !== 'PGRST116') { // PGRST116 = no rows found
+          console.error('Erreur chargement état whiteboard:', error);
+          return;
+        }
+        
+        if (data) {
+          console.log('État initial whiteboard:', data);
+          setIsWhiteboardActive(data.is_active || false);
+          setWhiteboardInitiator(data.initiator_id);
+        }
+      } catch (e) {
+        console.error('Exception chargement whiteboard:', e);
+      }
+    };
+    
+    loadInitialWhiteboardState();
+    
+    const channelName = `whiteboard-state-${roomId}-${Math.random().toString(36).substr(2, 9)}`;
+    console.log('Whiteboard: Creating state subscription:', channelName);
+    
+    const sub = supabase.channel(channelName)
+      .on('postgres_changes', { 
+        event: '*', 
+        schema: 'public', 
+        table: 'room_whiteboard', 
+        filter: `room_id=eq.${roomId}` 
+      }, (payload) => {
+        console.log('Whiteboard state change:', payload);
+        
         if (payload.eventType === 'INSERT' || payload.eventType === 'UPDATE') {
           const wasActive = isWhiteboardActive;
           const isNowActive = payload.new.is_active;
+          const newInitiator = payload.new.initiator_id;
+          
           setIsWhiteboardActive(isNowActive);
-          setWhiteboardInitiator(payload.new.initiator_id);
+          setWhiteboardInitiator(newInitiator);
           
           // Notification si quelqu'un d'autre active/désactive le tableau blanc
-          if (payload.new.initiator_id !== currentUser?.id) {
+          if (newInitiator !== currentUser?.id) {
             if (isNowActive && !wasActive) {
               showNotification('📝 Un participant a ouvert le tableau blanc', 'info');
             } else if (!isNowActive && wasActive) {
@@ -413,9 +507,15 @@ const MeetRoomPage = () => {
           setWhiteboardInitiator(null);
         }
       })
-      .subscribe();
-    return () => { supabase.removeChannel(sub); };
-  }, [roomId]);
+      .subscribe((status, err) => {
+        console.log('Whiteboard state subscription:', status, err);
+      });
+    
+    return () => { 
+      console.log('Whiteboard: Cleaning up state subscription');
+      supabase.removeChannel(sub); 
+    };
+  }, [roomId, currentUser?.id, isWhiteboardActive, whiteboardInitiator]);
 
 
 
@@ -470,7 +570,11 @@ const MeetRoomPage = () => {
 
   const toggleScreenShare = async () => {
     if (isScreenSharing) {
-      if (screenStreamRef.current) { screenStreamRef.current.getTracks().forEach(t => t.stop()); screenStreamRef.current = null; }
+      // Arrêter le partage d'écran
+      if (screenStreamRef.current) { 
+        screenStreamRef.current.getTracks().forEach(t => t.stop()); 
+        screenStreamRef.current = null; 
+      }
       setIsScreenSharing(false);
       
       // Notifier les autres que le partage d'écran est terminé
@@ -480,85 +584,174 @@ const MeetRoomPage = () => {
       
       if (cameraStreamRef.current) {
         setLocalStream(cameraStreamRef.current);
-        setMainDisplayedStreamInfo(prev => ({ ...prev, stream: cameraStreamRef.current, fullName: prev.fullName.replace(' (Écran)', '') }));
+        setMainDisplayedStreamInfo(prev => ({ 
+          ...prev, 
+          stream: cameraStreamRef.current, 
+          fullName: prev.fullName.replace(' (Écran)', '') 
+        }));
 
-        // Remplacer les tracks vidéo dans toutes les connexions existantes
+        // Remplacer SEULEMENT la track vidéo, garder l'audio du microphone
         Object.values(connectedPeers).forEach(call => {
           try {
-            // PeerJS expose peerConnection via call.peerConnection ou call._peerConnection
             const pc = call.peerConnection || call._peerConnection;
             if (pc && pc.getSenders) {
               const videoTrack = cameraStreamRef.current.getVideoTracks()[0];
               const senders = pc.getSenders();
               const videoSender = senders.find(s => s.track && s.track.kind === 'video');
               if (videoSender && videoTrack) {
-                videoSender.replaceTrack(videoTrack).catch(err => console.error('Erreur replaceTrack:', err));
+                videoSender.replaceTrack(videoTrack).catch(err => console.error('Erreur replaceTrack video:', err));
               }
+              // NE PAS remplacer l'audio - garder le microphone
             }
           } catch (err) {
-            console.error('Erreur lors du remplacement de track:', err);
+            console.error('Erreur lors du remplacement de track vidéo:', err);
           }
         });
       }
     } else {
+      // Démarrer le partage d'écran
       try {
-        const stream = await navigator.mediaDevices.getDisplayMedia({ video: { cursor: "always" }, audio: true });
-        screenStreamRef.current = stream;
+        const screenStream = await navigator.mediaDevices.getDisplayMedia({ 
+          video: { cursor: "always" }, 
+          audio: true 
+        });
+        
+        // Créer un stream combiné : vidéo du partage d'écran + audio du microphone
+        const combinedStream = new MediaStream();
+        
+        // Ajouter la vidéo du partage d'écran
+        const screenVideoTrack = screenStream.getVideoTracks()[0];
+        if (screenVideoTrack) {
+          combinedStream.addTrack(screenVideoTrack);
+        }
+        
+        // Garder l'audio du microphone (pas celui du partage d'écran)
+        if (cameraStreamRef.current) {
+          const micAudioTrack = cameraStreamRef.current.getAudioTracks()[0];
+          if (micAudioTrack) {
+            combinedStream.addTrack(micAudioTrack);
+          }
+        }
+        
+        screenStreamRef.current = screenStream;
         setIsScreenSharing(true);
-        setLocalStream(stream);
-        setMainDisplayedStreamInfo(prev => ({ ...prev, stream, fullName: prev.fullName + ' (Écran)' }));
+        setLocalStream(combinedStream);
+        setMainDisplayedStreamInfo(prev => ({ 
+          ...prev, 
+          stream: combinedStream, 
+          fullName: prev.fullName + ' (Écran)' 
+        }));
 
         // Notifier les autres du partage d'écran
         if (currentUser && roomId) {
           await supabase.from('room_participants').update({ is_screen_sharing: true }).match({ room_id: roomId, user_id: currentUser.id });
         }
 
-        // Remplacer les tracks vidéo/audio dans toutes les connexions existantes
+        // Remplacer SEULEMENT la track vidéo dans les connexions existantes
         Object.values(connectedPeers).forEach(call => {
           try {
             const pc = call.peerConnection || call._peerConnection;
             if (pc && pc.getSenders) {
               const senders = pc.getSenders();
               
-              const videoTrack = stream.getVideoTracks()[0];
-              const videoSender = senders.find(s => s.track && s.track.kind === 'video');
-              if (videoSender && videoTrack) {
-                videoSender.replaceTrack(videoTrack).catch(err => console.error('Erreur replaceTrack video:', err));
-              }
-
-              // Remplacer l'audio du partage d'écran si disponible
-              const audioTrack = stream.getAudioTracks()[0];
-              if (audioTrack) {
-                const audioSender = senders.find(s => s.track && s.track.kind === 'audio');
-                if (audioSender) {
-                  audioSender.replaceTrack(audioTrack).catch(err => console.error('Erreur replaceTrack audio:', err));
+              // Remplacer seulement la vidéo
+              if (screenVideoTrack) {
+                const videoSender = senders.find(s => s.track && s.track.kind === 'video');
+                if (videoSender) {
+                  console.log('[Screen Share] Remplacement track vidéo pour:', call.peer);
+                  videoSender.replaceTrack(screenVideoTrack)
+                    .then(() => console.log('[Screen Share] Track vidéo remplacée avec succès'))
+                    .catch(err => console.error('[Screen Share] Erreur replaceTrack video:', err));
+                } else {
+                  console.warn('[Screen Share] Aucun sender vidéo trouvé pour:', call.peer);
                 }
               }
+              
+              // NE PAS toucher à l'audio - garder le microphone
             }
           } catch (err) {
-            console.error('Erreur lors du remplacement de track:', err);
+            console.error('[Screen Share] Erreur lors du remplacement de track vidéo:', err);
           }
         });
+        
+        console.log(`[Screen Share] Tracks remplacées pour ${Object.keys(connectedPeers).length} connexions`);
 
-        stream.getVideoTracks()[0].onended = () => {
-          toggleScreenShare(); // Toggle back to camera
+        // Gérer la fin du partage d'écran (quand l'utilisateur clique sur "Arrêter le partage")
+        screenVideoTrack.onended = () => {
+          console.log('Partage d\'écran terminé par l\'utilisateur');
+          toggleScreenShare(); // Revenir à la caméra
         };
-      } catch (e) { if (e.name !== 'NotAllowedError') alert("Impossible de partager l'écran."); }
+        
+      } catch (e) { 
+        console.error('Erreur partage d\'écran:', e);
+        if (e.name !== 'NotAllowedError') {
+          alert("Impossible de partager l'écran. Vérifiez les permissions de votre navigateur.");
+        }
+      }
     }
   };
 
   // Whiteboard toggle
   const toggleWhiteboard = async () => {
-    if (isWhiteboardActive) {
-      await supabase.from('room_whiteboard').delete().match({ room_id: roomId });
-      setIsWhiteboardActive(false);
-      setWhiteboardInitiator(null);
-    } else {
-      await supabase.from('room_whiteboard').upsert({
-        room_id: roomId, is_active: true, initiator_id: currentUser.id, updated_at: new Date().toISOString()
-      }, { onConflict: 'room_id' });
-      setIsWhiteboardActive(true);
-      setWhiteboardInitiator(currentUser.id);
+    if (!currentUser?.id || !roomId) {
+      console.error('Cannot toggle whiteboard: missing user or room');
+      return;
+    }
+
+    try {
+      if (isWhiteboardActive) {
+        if (!window.confirm('Fermer le tableau blanc ? Le contenu sera perdu.')) {
+          return;
+        }
+        
+        console.log('Désactivation du tableau blanc...');
+        const { error } = await supabase
+          .from('room_whiteboard')
+          .delete()
+          .match({ room_id: roomId });
+        
+        if (error) {
+          console.error('Erreur désactivation whiteboard:', error);
+          showNotification('❌ Erreur lors de la fermeture du tableau blanc', 'error');
+          return;
+        }
+        
+        // Les états seront mis à jour via la subscription
+        console.log('Tableau blanc désactivé');
+        showNotification('📝 Tableau blanc fermé', 'success');
+      } else {
+        console.log('Activation du tableau blanc...');
+        
+        // Charger l'ancien canvas_data s'il existe
+        const { data: existing } = await supabase
+          .from('room_whiteboard')
+          .select('canvas_data')
+          .eq('room_id', roomId)
+          .single();
+        
+        const { error } = await supabase
+          .from('room_whiteboard')
+          .upsert({
+            room_id: roomId, 
+            is_active: true, 
+            initiator_id: currentUser.id, 
+            updated_at: new Date().toISOString(),
+            canvas_data: existing?.canvas_data || null // Ne pas reset si existe
+          }, { onConflict: 'room_id' });
+        
+        if (error) {
+          console.error('Erreur activation whiteboard:', error);
+          showNotification('❌ Erreur lors de l\'ouverture du tableau blanc', 'error');
+          return;
+        }
+        
+        // Les états seront mis à jour via la subscription
+        console.log('Tableau blanc activé');
+        showNotification('📝 Tableau blanc ouvert', 'success');
+      }
+    } catch (e) {
+      console.error('Exception toggle whiteboard:', e);
+      showNotification('❌ Erreur inattendue', 'error');
     }
   };
 
@@ -655,6 +848,76 @@ const MeetRoomPage = () => {
   };
 
   const copyRoomId = () => { navigator.clipboard.writeText(roomId); setCopiedId(true); setTimeout(() => setCopiedId(false), 2000); };
+
+  // Fonction pour forcer la resynchronisation des streams
+  const forceStreamSync = () => {
+    console.log('Forçage de la synchronisation des streams...');
+    if (!localStream || !peerInstance) return;
+    
+    Object.entries(connectedPeers).forEach(([peerId, call]) => {
+      try {
+        const pc = call.peerConnection || call._peerConnection;
+        if (pc && pc.getSenders) {
+          const senders = pc.getSenders();
+          
+          // Resynchroniser la vidéo
+          const videoTrack = localStream.getVideoTracks()[0];
+          if (videoTrack) {
+            const videoSender = senders.find(s => s.track && s.track.kind === 'video');
+            if (videoSender) {
+              videoSender.replaceTrack(videoTrack).catch(err => console.error('Erreur sync video:', err));
+            }
+          }
+          
+          // Resynchroniser l'audio
+          const audioTrack = localStream.getAudioTracks()[0];
+          if (audioTrack) {
+            const audioSender = senders.find(s => s.track && s.track.kind === 'audio');
+            if (audioSender) {
+              audioSender.replaceTrack(audioTrack).catch(err => console.error('Erreur sync audio:', err));
+            }
+          }
+        }
+      } catch (err) {
+        console.error(`Erreur lors de la synchronisation avec ${peerId}:`, err);
+      }
+    });
+    
+    showNotification('🔄 Synchronisation des streams forcée', 'info');
+  };
+
+  // Fonction pour diagnostiquer les problèmes de tableau blanc
+  const diagnoseWhiteboard = async () => {
+    console.log('=== DIAGNOSTIC TABLEAU BLANC ===');
+    console.log('Room ID:', roomId);
+    console.log('Whiteboard actif:', isWhiteboardActive);
+    console.log('Initiateur:', whiteboardInitiator);
+    console.log('Utilisateur actuel:', currentUser?.id);
+    
+    try {
+      // Vérifier les données dans la base
+      const { data, error } = await supabase
+        .from('room_whiteboard')
+        .select('*')
+        .eq('room_id', roomId);
+      
+      console.log('Données whiteboard en base:', data);
+      if (error) console.error('Erreur requête whiteboard:', error);
+      
+      // Vérifier les permissions RLS
+      const { data: testData, error: testError } = await supabase
+        .from('room_whiteboard')
+        .select('count')
+        .eq('room_id', roomId);
+      
+      console.log('Test permissions RLS:', testData, testError);
+      
+      showNotification('🔍 Diagnostic tableau blanc terminé (voir console)', 'info');
+    } catch (e) {
+      console.error('Erreur diagnostic:', e);
+      showNotification('❌ Erreur lors du diagnostic', 'error');
+    }
+  };
 
   const handleReportRoom = async (reason) => {
     if (!currentUser || !roomId) return;
@@ -780,6 +1043,29 @@ const MeetRoomPage = () => {
               </button>
               <button onClick={copyRoomId} className="sm:hidden p-2 hover:bg-gray-100 rounded-xl">
                 {copiedId ? <Check size={18} className="text-green-500" /> : <Copy size={18} className="text-gray-500" />}
+              </button>
+              <button 
+                onClick={forceStreamSync} 
+                className="p-2 hover:bg-gray-100 rounded-xl text-gray-500 hover:text-blue-500" 
+                title="Resynchroniser les streams"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/>
+                  <path d="M21 3v5h-5"/>
+                  <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/>
+                  <path d="M3 21v-5h5"/>
+                </svg>
+              </button>
+              <button 
+                onClick={diagnoseWhiteboard} 
+                className="p-2 hover:bg-gray-100 rounded-xl text-gray-500 hover:text-purple-500" 
+                title="Diagnostiquer le tableau blanc"
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <circle cx="12" cy="12" r="10"/>
+                  <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+                  <path d="M12 17h.01"/>
+                </svg>
               </button>
               <button onClick={() => setShowReportModal(true)} className="hidden sm:block p-2 hover:bg-gray-100 rounded-xl text-gray-500 hover:text-red-500" title="Signaler cette salle">
                 <Flag size={18} />

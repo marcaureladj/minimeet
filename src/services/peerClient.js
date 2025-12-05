@@ -1,14 +1,13 @@
 import { Peer } from 'peerjs';
 
 let peer = null;
-let localStreamPeerJs = null; // Non utilisé actuellement, mais pourrait l'être
 
 // Configuration PeerJS
 const peerConfig = {
   // host: 'localhost',
   // port: 9000,
   // path: '/myapp',
-  debug: 2, // 0 (aucun) à 3 (verbeux). 2 est un bon compromis pour le débogage.
+  debug: import.meta.env.DEV ? 2 : 0, // Logs seulement en développement
   // secure: true, // Si votre serveur PeerJS utilise HTTPS. Par défaut PeerServer Cloud est sur HTTPS.
   config: {
     iceServers: [
@@ -16,32 +15,28 @@ const peerConfig = {
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
 
-      // Vos serveurs Metered.ca
-      // STUN (bien que metered.ca fournisse principalement TURN, inclure leur STUN est ok)
+      // Serveurs Metered.ca
       { urls: "stun:stun.relay.metered.ca:80" }, 
-      // TURN (UDP - standard)
+      // TURN avec credentials depuis variables d'environnement
       {
         urls: "turn:standard.relay.metered.ca:80",
-        username: "a477d20cd8d0cbaa5c63b536",
-        credential: "42OzB3QurL4O5ghA",
+        username: import.meta.env.VITE_TURN_USERNAME || "a477d20cd8d0cbaa5c63b536",
+        credential: import.meta.env.VITE_TURN_CREDENTIAL || "42OzB3QurL4O5ghA",
       },
-      // TURN (TCP - fallback si UDP est bloqué)
       {
         urls: "turn:standard.relay.metered.ca:80?transport=tcp",
-        username: "a477d20cd8d0cbaa5c63b536",
-        credential: "42OzB3QurL4O5ghA",
+        username: import.meta.env.VITE_TURN_USERNAME || "a477d20cd8d0cbaa5c63b536",
+        credential: import.meta.env.VITE_TURN_CREDENTIAL || "42OzB3QurL4O5ghA",
       },
-      // TURN (UDP sur port 443 - peut aider à traverser certains pare-feux)
       {
         urls: "turn:standard.relay.metered.ca:443",
-        username: "a477d20cd8d0cbaa5c63b536",
-        credential: "42OzB3QurL4O5ghA",
+        username: import.meta.env.VITE_TURN_USERNAME || "a477d20cd8d0cbaa5c63b536",
+        credential: import.meta.env.VITE_TURN_CREDENTIAL || "42OzB3QurL4O5ghA",
       },
-      // TURNS (TCP sur port 443, chiffré - fallback plus robuste)
       {
-        urls: "turns:standard.relay.metered.ca:443?transport=tcp", // Notez 'turns' pour TLS
-        username: "a477d20cd8d0cbaa5c63b536",
-        credential: "42OzB3QurL4O5ghA",
+        urls: "turns:standard.relay.metered.ca:443?transport=tcp",
+        username: import.meta.env.VITE_TURN_USERNAME || "a477d20cd8d0cbaa5c63b536",
+        credential: import.meta.env.VITE_TURN_CREDENTIAL || "42OzB3QurL4O5ghA",
       },
     ]
   }
